@@ -52,7 +52,7 @@ impl Contract {
         let m = FungibleTokenMetadata {
             spec: FT_METADATA_SPEC.to_string(),
             name: "Cheddar".to_string(),
-            symbol: "CHEDDAR".to_string(),
+            symbol: "CHDR".to_string(),
             icon: None,
             reference: None, // TODO
             reference_hash: None,
