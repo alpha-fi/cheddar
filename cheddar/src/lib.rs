@@ -297,7 +297,7 @@ impl StorageManagement for Contract {
         } else {
             let min_balance = self.storage_balance_bounds().min.0;
             if amount < min_balance {
-                env::panic(b"The attached deposit is less than the mimimum storage balance");
+                env::panic(b"The attached deposit is less than the minimum storage balance");
             }
 
             self.internal_register_account(&account_id);
