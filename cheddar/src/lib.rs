@@ -260,7 +260,13 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
         let mut contract = Contract::new(accounts(1).into());
+        
+        testing_env!(context
+            .attached_deposit(1)
+            .predecessor_account_id(accounts(1))
+            .build());
         contract.mint(&accounts(1).to_string(), OWNER_SUPPLY.into());
+
         testing_env!(context.is_view(true).build());
         assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
         assert_eq!(contract.ft_balance_of(accounts(1)).0, OWNER_SUPPLY);
@@ -279,7 +285,13 @@ mod tests {
         let mut context = get_context(accounts(2));
         testing_env!(context.build());
         let mut contract = Contract::new(accounts(2).into());
+
+        testing_env!(context
+            .attached_deposit(1)
+            .predecessor_account_id(accounts(2))
+            .build());
         contract.mint(&accounts(2).to_string(), OWNER_SUPPLY.into());
+
         testing_env!(context
             .storage_usage(env::storage_usage())
             .attached_deposit(1_000_000_000_000_000)
