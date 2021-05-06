@@ -1,0 +1,4 @@
+1. Rewards every 1 min
+2. Add functions:
+	 pay-and-stake
+	 unstake-and-withdraw
