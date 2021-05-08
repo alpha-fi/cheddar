@@ -30,11 +30,14 @@ const GAS_FOR_RESOLVE_TRANSFER: Gas = 5*TGAS;
 const GAS_FOR_FT_TRANSFER_CALL: Gas = 25*TGAS + GAS_FOR_RESOLVE_TRANSFER;
 const NO_DEPOSIT: Balance = 0;
 
-type U128String = U128;
-
 near_sdk::setup_alloc!();
 
 mod internal;
+mod vesting;
+mod util;
+
+use vesting::{VestingRecord,VestingRecordJSON};
+use util::*;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -48,6 +51,8 @@ pub struct Contract {
     pub minters: Vec<AccountId>,
 
     pub total_supply: Balance,
+
+    pub vested: LookupMap<AccountId, VestingRecord>,
     
 }
 
@@ -67,6 +72,7 @@ impl Contract {
             accounts: LookupMap::new(b"a".to_vec()),
             minters: vec!(owner_id),
             total_supply: 0,
+            vested: LookupMap::new(b"v".to_vec()),
         }
     }
 
@@ -75,12 +81,20 @@ impl Contract {
         return self.owner_id.clone();
     }
 
-    //owner can mint more into their account
+    //minters can mint more 
     #[payable]
     pub fn mint(&mut self, account_id:&AccountId, amount:U128String){
         assert_one_yocto();
         self.assert_minter(env::predecessor_account_id());
         self.mint_into(account_id, amount.0);
+    }
+
+    //minters can also burn. La main qui donne est au-dessus de la main qui reçoit
+    #[payable]
+    pub fn burn(&mut self, account_id:&AccountId, amount:U128String){
+        assert_one_yocto();
+        self.assert_minter(env::predecessor_account_id());
+        self.internal_burn(account_id,amount.0);
     }
 
     //owner can add/remove minters
@@ -110,7 +124,7 @@ impl Contract {
 
     pub fn get_minters(self)->Vec<AccountId> { self.minters }
 
-    /// Returns account ID of the staking pool owner.
+    
     #[payable]
     pub fn set_metadata_icon(&mut self, svg_string: String)  {
         assert_one_yocto();
@@ -120,7 +134,7 @@ impl Contract {
         self.metadata.set(&m);
     }
 
-    /// Returns account ID of the staking pool owner.
+    
     #[payable]
     pub fn set_metadata_reference(&mut self, reference: String, reference_hash:String)  {
         assert_one_yocto();
@@ -132,6 +146,57 @@ impl Contract {
         self.metadata.set(&m);
     }
 
+    //-----------
+    //-- Vesting
+    //-----------
+
+    /// Get the amount of tokens that are locked in this account due to lockup or vesting.
+    pub fn get_locked_amount(&self) -> U128String {
+        match self.vested.get(&env::predecessor_account_id()) {
+            Some(vesting) => vesting.compute_amount_locked().into(),
+            None => 0.into(),
+        }
+    }
+
+    /// Get vesting information
+    pub fn get_vesting_info(&self) -> VestingRecordJSON {
+        let vesting=  self.vested.get(&env::predecessor_account_id()).unwrap();
+        VestingRecordJSON {
+            amount: vesting.amount.into(),
+            cliff_timestamp: vesting.cliff_timestamp.into(),
+            end_timestamp: vesting.end_timestamp.into()
+        }
+    }
+    
+    //minters can mint with vesting/locked periods
+    #[payable]
+    pub fn mint_vested(&mut self, account_id:&AccountId, amount:U128String, cliff_timestamp:U64String, end_timestamp:U64String){
+        self.mint(account_id, amount);
+        let record = VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
+        match self.vested.insert(&account_id, &record) {
+            Some(_) => panic!("account already vested"),
+            None => {}
+        }
+    }
+
+    #[payable]
+    /// terminate vesting before the cliff
+    /// burn the tokens
+    pub fn terminate_vesting(&mut self, account_id:&AccountId){
+        assert_one_yocto();
+        self.assert_minter(env::predecessor_account_id());
+        match self.vested.get(&account_id) {
+            Some(vesting) => {
+                if vesting.compute_amount_locked() == 0 {
+                    panic!("past the cliff, vesting can't be changed")
+                }
+                self.internal_burn(account_id, vesting.amount);
+                self.vested.remove(&account_id);
+            }
+            None => panic!("account not vested")
+        }
+    }
+    
 }
 
 #[near_bindgen]

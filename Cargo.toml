@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "./cheddar",
-    "./p1-staking-pool",
 ]
 
 
