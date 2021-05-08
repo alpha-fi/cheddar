@@ -159,8 +159,9 @@ impl Contract {
     }
 
     /// Get vesting information
-    pub fn get_vesting_info(&self) -> VestingRecordJSON {
-        let vesting=  self.vested.get(&env::predecessor_account_id()).unwrap();
+    pub fn get_vesting_info(&self, account_id:AccountId) -> VestingRecordJSON {
+        log!("{}",&account_id);
+        let vesting=  self.vested.get(&account_id).unwrap();
         VestingRecordJSON {
             amount: vesting.amount.into(),
             cliff_timestamp: vesting.cliff_timestamp.into(),
