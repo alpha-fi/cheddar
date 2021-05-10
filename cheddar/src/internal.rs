@@ -47,11 +47,11 @@ impl Contract {
         self.total_supply += amount;
     }
 
-    pub fn internal_burn(&mut self, account_id:&AccountId, amount:u128){
+    pub fn internal_burn(&mut self, account_id: &AccountId, amount: u128) {
         let balance = self.internal_unwrap_balance_of(account_id);
-        assert!(balance>=amount);
+        assert!(balance >= amount);
         self.internal_update_account(&account_id, balance - amount);
-        assert!(self.total_supply>=amount);
+        assert!(self.total_supply >= amount);
         self.total_supply -= amount;
     }
 
@@ -90,7 +90,7 @@ impl Contract {
                     panic!("Vested account, balance can't go lower than {}", locked);
                 }
             }
-            None => {},
+            None => {}
         }
 
         // add to receiver

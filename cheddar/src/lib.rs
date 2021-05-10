@@ -1,14 +1,14 @@
 /// Cheddar Token
-/// 
+///
 /// Functionality:
 /// - No account storage complexity - Since NEAR slashed storage price by 10x
 /// it does not make sense to add that friction (storage backup per user).
 /// Token creator must store enough NEAR in the contract to support growth.
 /// - Multi-minters, no fixed total_supply:
-/// The owner can add/remove allowed minters. This is useful if you want 
+/// The owner can add/remove allowed minters. This is useful if you want
 /// an external contract, a farm for example, to be able to mint tokens
 /// - Ultra-Lazy ft-metadata: ft-metadata is not stored unless changed
-/// 
+///
 use near_sdk::collections::LookupMap;
 
 use near_contract_standards::fungible_token::{
@@ -22,22 +22,22 @@ use near_sdk::collections::LazyOption;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
     assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance, Gas,
-    PanicOnDefault, PromiseOrValue, 
+    PanicOnDefault, PromiseOrValue,
 };
 
 const TGAS: Gas = 1_000_000_000_000;
-const GAS_FOR_RESOLVE_TRANSFER: Gas = 5*TGAS;
-const GAS_FOR_FT_TRANSFER_CALL: Gas = 25*TGAS + GAS_FOR_RESOLVE_TRANSFER;
+const GAS_FOR_RESOLVE_TRANSFER: Gas = 5 * TGAS;
+const GAS_FOR_FT_TRANSFER_CALL: Gas = 25 * TGAS + GAS_FOR_RESOLVE_TRANSFER;
 const NO_DEPOSIT: Balance = 0;
 
 near_sdk::setup_alloc!();
 
 mod internal;
-mod vesting;
 mod util;
+mod vesting;
 
-use vesting::{VestingRecord,VestingRecordJSON};
 use util::*;
+use vesting::{VestingRecord, VestingRecordJSON};
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -53,7 +53,6 @@ pub struct Contract {
     pub total_supply: Balance,
 
     pub vested: LookupMap<AccountId, VestingRecord>,
-    
 }
 
 #[near_bindgen]
@@ -62,15 +61,14 @@ impl Contract {
 
     #[init]
     pub fn new(owner_id: AccountId) -> Self {
-        
         //validate default metadata
         internal::default_ft_metadata().assert_valid();
-        
+
         Self {
             owner_id: owner_id.clone(),
             metadata: LazyOption::new(b"m".to_vec(), None),
             accounts: LookupMap::new(b"a".to_vec()),
-            minters: vec!(owner_id),
+            minters: vec![owner_id],
             total_supply: 0,
             vested: LookupMap::new(b"v".to_vec()),
         }
@@ -81,9 +79,9 @@ impl Contract {
         return self.owner_id.clone();
     }
 
-    //minters can mint more 
+    //minters can mint more
     #[payable]
-    pub fn mint(&mut self, account_id:&AccountId, amount:U128String){
+    pub fn mint(&mut self, account_id: &AccountId, amount: U128String) {
         assert_one_yocto();
         self.assert_minter(env::predecessor_account_id());
         self.mint_into(account_id, amount.0);
@@ -91,18 +89,18 @@ impl Contract {
 
     //minters can also burn. La main qui donne est au-dessus de la main qui reçoit
     #[payable]
-    pub fn burn(&mut self, account_id:&AccountId, amount:U128String){
+    pub fn burn(&mut self, account_id: &AccountId, amount: U128String) {
         assert_one_yocto();
         self.assert_minter(env::predecessor_account_id());
-        self.internal_burn(account_id,amount.0);
+        self.internal_burn(account_id, amount.0);
     }
 
     //owner can add/remove minters
     #[payable]
-    pub fn add_minter(&mut self, account_id:AccountId){
+    pub fn add_minter(&mut self, account_id: AccountId) {
         assert_one_yocto();
         self.assert_owner_calling();
-        if let Some(_) = self.minters.iter().position(|x| *x==account_id) {
+        if let Some(_) = self.minters.iter().position(|x| *x == account_id) {
             //found
             panic!("already in the list");
         }
@@ -110,23 +108,23 @@ impl Contract {
     }
 
     #[payable]
-    pub fn remove_minter(&mut self, account_id:&AccountId){
+    pub fn remove_minter(&mut self, account_id: &AccountId) {
         assert_one_yocto();
         self.assert_owner_calling();
-        if let Some(inx) = self.minters.iter().position(|x| x==account_id) {
+        if let Some(inx) = self.minters.iter().position(|x| x == account_id) {
             //found
             let _removed = self.minters.swap_remove(inx);
-        }
-        else { 
-            panic!("not a minter") 
+        } else {
+            panic!("not a minter")
         }
     }
 
-    pub fn get_minters(self)->Vec<AccountId> { self.minters }
+    pub fn get_minters(self) -> Vec<AccountId> {
+        self.minters
+    }
 
-    
     #[payable]
-    pub fn set_metadata_icon(&mut self, svg_string: String)  {
+    pub fn set_metadata_icon(&mut self, svg_string: String) {
         assert_one_yocto();
         self.assert_owner_calling();
         let mut m = self.internal_get_ft_metadata();
@@ -134,9 +132,8 @@ impl Contract {
         self.metadata.set(&m);
     }
 
-    
     #[payable]
-    pub fn set_metadata_reference(&mut self, reference: String, reference_hash:String)  {
+    pub fn set_metadata_reference(&mut self, reference: String, reference_hash: String) {
         assert_one_yocto();
         self.assert_owner_calling();
         let mut m = self.internal_get_ft_metadata();
@@ -159,21 +156,28 @@ impl Contract {
     }
 
     /// Get vesting information
-    pub fn get_vesting_info(&self, account_id:AccountId) -> VestingRecordJSON {
-        log!("{}",&account_id);
-        let vesting=  self.vested.get(&account_id).unwrap();
+    pub fn get_vesting_info(&self, account_id: AccountId) -> VestingRecordJSON {
+        log!("{}", &account_id);
+        let vesting = self.vested.get(&account_id).unwrap();
         VestingRecordJSON {
             amount: vesting.amount.into(),
             cliff_timestamp: vesting.cliff_timestamp.into(),
-            end_timestamp: vesting.end_timestamp.into()
+            end_timestamp: vesting.end_timestamp.into(),
         }
     }
-    
+
     //minters can mint with vesting/locked periods
     #[payable]
-    pub fn mint_vested(&mut self, account_id:&AccountId, amount:U128String, cliff_timestamp:U64String, end_timestamp:U64String){
+    pub fn mint_vested(
+        &mut self,
+        account_id: &AccountId,
+        amount: U128String,
+        cliff_timestamp: U64String,
+        end_timestamp: U64String,
+    ) {
         self.mint(account_id, amount);
-        let record = VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
+        let record =
+            VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
         match self.vested.insert(&account_id, &record) {
             Some(_) => panic!("account already vested"),
             None => {}
@@ -183,7 +187,7 @@ impl Contract {
     #[payable]
     /// terminate vesting before the cliff
     /// burn the tokens
-    pub fn terminate_vesting(&mut self, account_id:&AccountId){
+    pub fn terminate_vesting(&mut self, account_id: &AccountId) {
         assert_one_yocto();
         self.assert_minter(env::predecessor_account_id());
         match self.vested.get(&account_id) {
@@ -194,10 +198,9 @@ impl Contract {
                 self.internal_burn(account_id, vesting.amount);
                 self.vested.remove(&account_id);
             }
-            None => panic!("account not vested")
+            None => panic!("account not vested"),
         }
     }
-    
 }
 
 #[near_bindgen]
@@ -281,7 +284,6 @@ impl FungibleTokenMetadataProvider for Contract {
     }
 }
 
-
 #[ext_contract(ext_ft_receiver)]
 pub trait FungibleTokenReceiver {
     fn ft_on_transfer(
@@ -326,7 +328,7 @@ mod tests {
         let mut context = get_context(accounts(1));
         testing_env!(context.build());
         let mut contract = Contract::new(accounts(1).into());
-        
+
         testing_env!(context
             .attached_deposit(1)
             .predecessor_account_id(accounts(1))
