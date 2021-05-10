@@ -1,206 +1,213 @@
 use std::convert::TryInto;
 
-use near_contract_standards::fungible_token::{
-    core::FungibleTokenCore,
-    metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC},
-    resolver::FungibleTokenResolver,
-};
-use near_contract_standards::storage_management::{
-    StorageBalance, StorageBalanceBounds, StorageManagement,
-};
+// use near_contract_standards::storage_management::{
+//     StorageBalance, StorageBalanceBounds, StorageManagement,
+// };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LazyOption;
-use near_sdk::collections::{LookupMap, UnorderedSet, Vector};
+use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance, Gas,
-    PanicOnDefault, Promise, PromiseOrValue, PromiseResult, StorageUsage,
+    assert_one_yocto, env, near_bindgen, AccountId, Balance, PanicOnDefault, Promise, PromiseResult,
 };
 
 use crate::constants::*;
-use crate::deposit::*;
 use crate::errors::*;
 use crate::interfaces::*;
+use crate::vault::*;
 
 mod constants;
-mod deposit;
 mod errors;
 mod interfaces;
+mod vault;
 
 near_sdk::setup_alloc!();
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
-    // pub deposits: LookupMap<AccountId, Deposit>,
+    pub cheddar_id: AccountId,
     pub vaults: LookupMap<AccountId, Vault>,
     pub total_stake: Vault,
 
-    pub weekly_supply: Balance,
+    /// amount of $CHEDDAR farmed each epoch per 1 staked $NEAR.
+    pub reward_rate: Balance,
+
     /// block timestamp when we start farming
     pub start: u64,
-    /// length of epoch for farming
-    pub epoch_len: u64,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the given total supply owned by the given `owner_id`.
     #[init]
-    pub fn new(start: u64, epoch_len: u64, weekly_supply: Balance) -> Self {
+    pub fn new(cheddar_id: ValidAccountId, start: u64, reward_rate: Balance) -> Self {
         Self {
-            deposits: LookupMap::new(b"d".to_vec()),
-            vaults: LookupMap::new(b"s".to_vec()),
-            total_stake: 0,
+            cheddar_id: cheddar_id.into(),
+            vaults: LookupMap::new(b"v".to_vec()),
+            total_stake: Vault::default(),
 
-            weekly_supply,
+            reward_rate,
             start,
-            epoch_len,
         }
     }
 
     // ************ //
     // view methods //
 
-    /// Returns available (unstaked) $NEAR balance
-    pub fn balance_of(&self, account_id: &AccountId) -> Balance {
-        self.get_account(account_id).near_amount
+    /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
+    pub fn status(&self, account_id: AccountId) -> (U128, U128) {
+        match self.vaults.get(&account_id) {
+            None => {
+                let zero = U128::from(0);
+                return (zero, zero);
+            }
+            Some(mut v) => {
+                v.ping(current_epoch(), self.reward_rate);
+                return (v.total().into(), v.rewards.into());
+            }
+        }
     }
 
     // ******************* //
     // transaction methods //
 
+    /// Stake attached &NEAR and returns total amount of stake.
     #[payable]
-    pub fn stake(&mut self, amount: U128) {
+    pub fn stake(&mut self) -> U128 {
+        let amount = env::attached_deposit();
+        assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
+        let aid = env::predecessor_account_id();
+        let epoch = current_epoch();
+        match self.vaults.get(&aid) {
+            None => {
+                self.vaults.insert(
+                    &aid,
+                    &Vault {
+                        epoch,
+                        locked: amount,
+                        locked_new: 0,
+                        rewards: 0,
+                    },
+                );
+                return amount.into();
+            }
+            Some(mut v) => {
+                v.stake(amount, epoch, self.reward_rate);
+                self.vaults.insert(&aid, &v);
+                return v.total().into();
+            }
+        };
+    }
+
+    /// Unstakes given amount of $NEAR and transfers it back to the user.
+    /// Returns amount of staked tokens left after the call.
+    /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
+    /// Requires 1 yNEAR payment for wallet validation.
+    #[payable]
+    pub fn unstake(&mut self, amount: U128) -> U128 {
         assert_one_yocto();
         let amount = u128::from(amount);
-        let aid = env::predecessor_account_id();
-        let mut v = self.get_vault(&aid);
+        let (aid, mut v) = self.get_vault();
+        v.unstake(amount, current_epoch(), self.reward_rate);
+        let left = v.total();
+        assert!(left <= MIN_STAKE || v.rewards != 0, "{}", ERR02_MIN_BALANCE);
+
+        self.vaults.insert(&aid, &v);
+        Promise::new(aid).transfer(amount);
+        left.into()
     }
 
-    pub fn internal_deposit(&mut self, account_id: &AccountId, amount: Balance) {
-        let balance = self.internal_unwrap_balance_of(account_id);
-        if let Some(new_balance) = balance.checked_add(amount) {
-            self.accounts.insert(&account_id, &new_balance);
-            self.total_supply = self
-                .total_supply
-                .checked_add(amount)
-                .expect("Total supply overflow");
-        } else {
-            env::panic(b"Balance overflow");
-        }
+    /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_tranfer
+    /// and all NEAR to the caller.
+    /// Returns amount of farmed CHEDDAR.
+    /// Panics if the caller doesn't stake anything.
+    /// Requires 1 yNEAR payment for wallet validation.
+    #[payable]
+    pub fn close(&mut self) -> U128 {
+        assert_one_yocto();
+        let (aid, mut v) = self.get_vault();
+        env_log!("Closing {} account, farmed CHEDDAR: {}", &aid, v.rewards);
+        v.ping(current_epoch(), self.reward_rate);
+        self.vaults.remove(&aid);
+
+        let rewards_str: U128 = v.rewards.into();
+        let callback = self.withdraw_cheddar(&aid, rewards_str);
+        Promise::new(aid).transfer(v.total()).and(callback);
+
+        // TODO: recover the account - it's not deleted!
+
+        return rewards_str;
     }
 
-    pub fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance) {
-        let balance = self.internal_unwrap_balance_of(account_id);
-        if let Some(new_balance) = balance.checked_sub(amount) {
-            self.accounts.insert(&account_id, &new_balance);
-            self.total_supply = self
-                .total_supply
-                .checked_sub(amount)
-                .expect("Total supply overflow");
-        } else {
-            env::panic(b"The account doesn't have enough balance");
-        }
+    #[payable]
+    pub fn withdraw_crop(&mut self, amount: U128) {
+        let amount_n = u128::from(amount);
+        assert!(amount_n > 0, "can't withdraw 0 tokens");
+        let (aid, mut v) = self.get_vault();
+        v.ping(current_epoch(), self.reward_rate);
+        assert!(
+            amount_n > v.rewards,
+            "E20: not enough cheddar farmed, available: {}",
+            v.rewards
+        );
+        v.rewards -= amount_n;
+        self.vaults.insert(&aid, &v);
+        self.withdraw_cheddar(&aid, amount);
     }
 
-    pub fn internal_register_account(&mut self, account_id: &AccountId) {
-        if self.accounts.insert(&account_id, &0).is_some() {
-            env::panic(b"The account is already registered");
-        }
+    /*****************
+     * internal methods */
+
+    fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128) -> Promise {
+        ext_ft::ft_transfer(
+            a.clone().try_into().unwrap(),
+            amount,
+            None,
+            &self.cheddar_id,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        )
+        .then(ext_self::withdraw_callback(
+            a.clone(),
+            amount,
+            &env::current_account_id(),
+            0,
+            GAS_FOR_FT_TRANSFER,
+        ))
+    }
+
+    #[private]
+    pub fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128) {
+        assert_eq!(
+            env::promise_results_count(),
+            1,
+            "{}",
+            ERR25_WITHDRAW_CALLBACK
+        );
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(_) => {}
+            PromiseResult::Failed => {
+                let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
+                v.rewards += amount.0;
+                self.vaults.insert(&sender_id, &v);
+            }
+        };
     }
 }
 
-#[near_bindgen]
-impl StorageManagement for Contract {
-    // `registration_only` doesn't affect the implementation for vanilla fungible token.
-    #[allow(unused_variables)]
-    #[payable]
-    fn storage_deposit(
-        &mut self,
-        account_id: Option<ValidAccountId>,
-        registration_only: Option<bool>,
-    ) -> StorageBalance {
-        let amount: Balance = env::attached_deposit();
-        let account_id = account_id
-            .map(|a| a.into())
-            .unwrap_or_else(|| env::predecessor_account_id());
-        if self.accounts.contains_key(&account_id) {
-            log!("The account is already registered, refunding the deposit");
-            if amount > 0 {
-                Promise::new(env::predecessor_account_id()).transfer(amount);
-            }
-        } else {
-            let min_balance = self.storage_balance_bounds().min.0;
-            if amount < min_balance {
-                env::panic(b"The attached deposit is less than the minimum storage balance");
-            }
+fn current_epoch() -> u64 {
+    return env::block_timestamp();
+}
 
-            self.internal_register_account(&account_id);
-            let refund = amount - min_balance;
-            if refund > 0 {
-                Promise::new(env::predecessor_account_id()).transfer(refund);
-            }
-        }
-        self.internal_storage_balance_of(&account_id).unwrap()
-    }
-
-    /// While storage_withdraw normally allows the caller to retrieve `available` balance, the basic
-    /// Fungible Token implementation sets storage_balance_bounds.min == storage_balance_bounds.max,
-    /// which means available balance will always be 0. So this implementation:
-    /// * panics if `amount > 0`
-    /// * never transfers Ⓝ to caller
-    /// * returns a `storage_balance` struct if `amount` is 0
-    #[payable]
-    fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
-        assert_one_yocto();
-        let predecessor_account_id = env::predecessor_account_id();
-        if let Some(storage_balance) = self.internal_storage_balance_of(&predecessor_account_id) {
-            match amount {
-                Some(amount) if amount.0 > 0 => {
-                    env::panic(b"The amount is greater than the available storage balance");
-                }
-                _ => storage_balance,
-            }
-        } else {
-            env::panic(
-                format!("The account {} is not registered", &predecessor_account_id).as_bytes(),
-            );
-        }
-    }
-
-    #[payable]
-    fn storage_unregister(&mut self, force: Option<bool>) -> bool {
-        assert_one_yocto();
-        let account_id = env::predecessor_account_id();
-        let force = force.unwrap_or(false);
-        if let Some(balance) = self.accounts.get(&account_id) {
-            if balance != 0 && !force {
-                env::panic(b"Can't unregister the account with the positive balance without force")
-            }
-            self.accounts.remove(&account_id);
-            self.total_supply -= balance;
-            Promise::new(account_id.clone()).transfer(self.storage_balance_bounds().min.0 + 1);
-            // TODO on_account_closed
-            return true;
-        } else {
-            log!("The account {} is not registered", &account_id);
-            return false;
-        }
-    }
-
-    fn storage_balance_bounds(&self) -> StorageBalanceBounds {
-        let required_storage_balance =
-            Balance::from(self.account_storage_usage) * env::storage_byte_cost();
-        StorageBalanceBounds {
-            min: required_storage_balance.into(),
-            max: Some(required_storage_balance.into()),
-        }
-    }
-
-    fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
-        self.internal_storage_balance_of(&account_id.into())
-    }
+#[macro_export]
+macro_rules! env_log {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        // io::_print(msg);
+        println!("{}", msg);
+        env::log(msg.as_bytes())
+    }}
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
