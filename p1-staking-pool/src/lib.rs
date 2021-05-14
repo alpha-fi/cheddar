@@ -7,7 +7,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, Balance, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
 };
 
 use crate::constants::*;
@@ -19,40 +19,58 @@ mod constants;
 mod errors;
 mod interfaces;
 mod vault;
+mod util;
 
 near_sdk::setup_alloc!();
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
+    pub owner_id: AccountId,
+    /// farm token
     pub cheddar_id: AccountId,
+    // if farming is opened
+    pub is_open: bool,
+    //user vaults
     pub vaults: LookupMap<AccountId, Vault>,
-    pub total_stake: Vault,
-
-    /// amount of $CHEDDAR farmed each epoch per 1 staked $NEAR.
-    pub reward_rate: Balance,
-
-    /// block timestamp when we start farming
-    pub start: u64,
+    /// amount of $CHEDDAR farmed each block per 1 staked $NEAR.
+    /// e.g. if rewards_per_hour=60 & you stake 100N per 10 minutes, you get 600*2*100/3600 = 1_000 CHEDDAR
+    pub rewards_per_hour: u32,
 }
 
 #[near_bindgen]
 impl Contract {
-    /// Initializes the contract with the given total supply owned by the given `owner_id`.
+    /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_hour
     #[init]
-    pub fn new(cheddar_id: ValidAccountId, start: u64, reward_rate: Balance) -> Self {
+    pub fn new(
+        owner_id: ValidAccountId,
+        cheddar_id: ValidAccountId,
+        rewards_per_hour: u32,
+    ) -> Self {
         Self {
+            owner_id: owner_id.into(),
             cheddar_id: cheddar_id.into(),
+            is_open: false,
             vaults: LookupMap::new(b"v".to_vec()),
-            total_stake: Vault::default(),
-
-            reward_rate,
-            start,
+            rewards_per_hour,
         }
     }
 
     // ************ //
     // view methods //
+
+    /// opens or closes the farming
+    pub fn open(&mut self, value: bool) {
+        self.assert_owner_calling();
+        self.is_open = value;
+    }
+ 
+    //TODO: have prev_rph & new_rph in vault, so if does not affect you until you ping
+    /// change rewards_per_hour
+    pub fn set_rewards_per_hour(&mut self, new_value: u32) {
+        self.assert_owner_calling();
+        self.rewards_per_hour = new_value;
+    }
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn status(&self, account_id: AccountId) -> (U128, U128) {
@@ -61,9 +79,11 @@ impl Contract {
                 let zero = U128::from(0);
                 return (zero, zero);
             }
-            Some(mut v) => {
-                v.ping(current_epoch(), self.reward_rate);
-                return (v.total().into(), v.rewards.into());
+            Some(mut vault) => {
+                return (
+                    vault.staked.into(),
+                    vault.ping(self.rewards_per_hour).into(),
+                );
             }
         }
     }
@@ -74,27 +94,26 @@ impl Contract {
     /// Stake attached &NEAR and returns total amount of stake.
     #[payable]
     pub fn stake(&mut self) -> U128 {
+        self.assert_open();
         let amount = env::attached_deposit();
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
         let aid = env::predecessor_account_id();
-        let epoch = current_epoch();
         match self.vaults.get(&aid) {
             None => {
                 self.vaults.insert(
                     &aid,
                     &Vault {
-                        epoch,
-                        locked: amount,
-                        locked_new: 0,
+                        previous: env::block_timestamp(),
+                        staked: amount,
                         rewards: 0,
                     },
                 );
                 return amount.into();
             }
-            Some(mut v) => {
-                v.stake(amount, epoch, self.reward_rate);
-                self.vaults.insert(&aid, &v);
-                return v.total().into();
+            Some(mut vault) => {
+                vault.stake(amount, self.rewards_per_hour);
+                self.vaults.insert(&aid, &vault);
+                return vault.staked.into();
             }
         };
     }
@@ -107,17 +126,20 @@ impl Contract {
     pub fn unstake(&mut self, amount: U128) -> U128 {
         assert_one_yocto();
         let amount = u128::from(amount);
-        let (aid, mut v) = self.get_vault();
-        v.unstake(amount, current_epoch(), self.reward_rate);
-        let left = v.total();
-        assert!(left <= MIN_STAKE || v.rewards != 0, "{}", ERR02_MIN_BALANCE);
+        let (aid, mut vault) = self.get_vault();
+        vault.unstake(amount, self.rewards_per_hour);
+        assert!(
+            vault.staked <= MIN_STAKE || vault.rewards != 0,
+            "{}",
+            ERR02_MIN_BALANCE
+        );
 
-        self.vaults.insert(&aid, &v);
+        self.vaults.insert(&aid, &vault);
         Promise::new(aid).transfer(amount);
-        left.into()
+        vault.staked.into()
     }
 
-    /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_tranfer
+    /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
     /// and all NEAR to the caller.
     /// Returns amount of farmed CHEDDAR.
     /// Panics if the caller doesn't stake anything.
@@ -125,14 +147,18 @@ impl Contract {
     #[payable]
     pub fn close(&mut self) -> U128 {
         assert_one_yocto();
-        let (aid, mut v) = self.get_vault();
-        env_log!("Closing {} account, farmed CHEDDAR: {}", &aid, v.rewards);
-        v.ping(current_epoch(), self.reward_rate);
+        let (aid, mut vault) = self.get_vault();
+        vault.ping(self.rewards_per_hour);
+        env_log!(
+            "Closing {} account, farmed CHEDDAR: {}",
+            &aid,
+            vault.rewards
+        );
         self.vaults.remove(&aid);
 
-        let rewards_str: U128 = v.rewards.into();
+        let rewards_str: U128 = vault.rewards.into();
         let callback = self.withdraw_cheddar(&aid, rewards_str);
-        Promise::new(aid).transfer(v.total()).and(callback);
+        Promise::new(aid).transfer(vault.staked).and(callback);
 
         // TODO: recover the account - it's not deleted!
 
@@ -143,15 +169,15 @@ impl Contract {
     pub fn withdraw_crop(&mut self, amount: U128) {
         let amount_n = u128::from(amount);
         assert!(amount_n > 0, "can't withdraw 0 tokens");
-        let (aid, mut v) = self.get_vault();
-        v.ping(current_epoch(), self.reward_rate);
+        let (aid, mut vault) = self.get_vault();
+        vault.ping(self.rewards_per_hour);
         assert!(
-            amount_n > v.rewards,
+            amount_n <= vault.rewards,
             "E20: not enough cheddar farmed, available: {}",
-            v.rewards
+            vault.rewards
         );
-        v.rewards -= amount_n;
-        self.vaults.insert(&aid, &v);
+        vault.rewards -= amount_n;
+        self.vaults.insert(&aid, &vault);
         self.withdraw_cheddar(&aid, amount);
     }
 
@@ -164,14 +190,14 @@ impl Contract {
             amount,
             None,
             &self.cheddar_id,
-            1,
+            ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
         )
         .then(ext_self::withdraw_callback(
             a.clone(),
             amount,
             &env::current_account_id(),
-            0,
+            NO_DEPOSIT,
             GAS_FOR_FT_TRANSFER,
         ))
     }
@@ -194,10 +220,19 @@ impl Contract {
             }
         };
     }
-}
 
-fn current_epoch() -> u64 {
-    return env::block_timestamp();
+    fn assert_owner_calling(&self) {
+        assert!(
+            env::predecessor_account_id() == self.owner_id,
+            "can only be called by the owner"
+        );
+    }
+    fn assert_open(&self) {
+        assert!(
+            self.is_open,
+            "Farming is not open"
+        );
+    }
 }
 
 #[macro_export]
@@ -211,6 +246,7 @@ macro_rules! env_log {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(unused_imports)]
 mod tests {
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::MockedBlockchain;

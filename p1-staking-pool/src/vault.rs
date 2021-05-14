@@ -4,60 +4,46 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{AccountId, Balance};
 
 use crate::*;
+use util::U256;
 
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 #[cfg_attr(feature = "test", derive(Clone))]
 pub struct Vault {
-    pub epoch: u64,
-    /// amount of $near locked in the current epoch
-    pub locked: Balance,
-    /// amount of $near locked for the next epoch
-    pub locked_new: Balance,
-
-    // TODO: decide if we want to have a fixed rate rewards (fixed rate per $near staked)
-    // or have a total amount of cheddar to distribute for each epoch
+    // env::block_timestamp for the last time ping was called
+    pub previous: u64,
+    /// amount of $near locked in this vault
+    pub staked: Balance,
     /// Amount of accumulated rewards from staking;
     pub rewards: Balance,
 }
 
 impl Vault {
     /**
-    Update state and rewards for locked tokens in past epochs
-    Parameters:
-    * `epoch`: beginning of current epoch
-    * `reward_rate`: amount of $CHEDDAR received for 1,000,000 $NEAR staked.
+    Update rewards for locked tokens in past epochs
+    returns total rewards
     */
-    pub(crate) fn ping(&mut self, epoch: u64, reward_rate: u128) {
-        while self.epoch < epoch {
-            self.epoch += EPOCH_DURATION;
-            self.rewards += self.locked * reward_rate / 1_000_000;
-            self.locked += self.locked_new;
-            self.locked_new = 0;
+    pub(crate) fn ping(&mut self, rewards_per_hour: u32) -> u128 {
+        if self.previous != 0 {
+            let current = env::block_timestamp(); //nanoseconds
+            assert!(current >= self.previous);
+            let delta_seconds = (current - self.previous) / NANO;
+            if delta_seconds>0 {
+                self.rewards += (U256::from(delta_seconds) * U256::from(rewards_per_hour) * U256::from(self.staked) / U256::from(SECONDS_PER_HOUR)).as_u128();
+                self.previous = current;
+            }
         }
+        self.rewards
     }
 
-    pub(crate) fn stake(&mut self, amount: Balance, epoch: u64, reward_rate: u128) {
-        self.ping(epoch, reward_rate);
-        self.locked_new += amount;
+    pub(crate) fn stake(&mut self, amount: Balance, rewards_per_hour: u32) {
+        self.ping(rewards_per_hour);
+        self.staked += amount;
     }
 
-    pub(crate) fn unstake(&mut self, mut amount: Balance, epoch: u64, reward_rate: u128) {
-        self.ping(epoch, reward_rate);
-
-        if self.locked_new > amount {
-            self.locked_new -= amount;
-            return;
-        }
-        amount -= self.locked_new;
-        self.locked_new = 0;
-        assert!(self.locked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
-        self.locked -= amount;
-    }
-
-    /// Returns amount of deposited NEAR.
-    #[inline]
-    pub fn total(&self) -> Balance {
-        return self.locked + self.locked_new;
+    pub(crate) fn unstake(&mut self, amount: Balance, rewards_per_hour: u32) {
+        assert!(self.staked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
+        self.ping(rewards_per_hour);
+        self.staked -= amount;
     }
 }
 
