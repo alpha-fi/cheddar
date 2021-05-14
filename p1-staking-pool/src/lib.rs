@@ -18,8 +18,8 @@ use crate::vault::*;
 mod constants;
 mod errors;
 mod interfaces;
-mod vault;
 mod util;
+mod vault;
 
 near_sdk::setup_alloc!();
 
@@ -34,25 +34,25 @@ pub struct Contract {
     //user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed each block per 1 staked $NEAR.
-    /// e.g. if rewards_per_hour=60 & you stake 100N per 10 minutes, you get 600*2*100/3600 = 1_000 CHEDDAR
-    pub rewards_per_hour: u32,
+    /// e.g. if rewards_per_year=60 & you stake 100N per 10 minutes, you get 600*2*100/3600 = 1_000 CHEDDAR
+    pub rewards_per_year: u32,
 }
 
 #[near_bindgen]
 impl Contract {
-    /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_hour
+    /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
         cheddar_id: ValidAccountId,
-        rewards_per_hour: u32,
+        rewards_per_year: u32,
     ) -> Self {
         Self {
             owner_id: owner_id.into(),
             cheddar_id: cheddar_id.into(),
             is_open: false,
             vaults: LookupMap::new(b"v".to_vec()),
-            rewards_per_hour,
+            rewards_per_year,
         }
     }
 
@@ -64,14 +64,22 @@ impl Contract {
         self.assert_owner_calling();
         self.is_open = value;
     }
- 
     //TODO: have prev_rph & new_rph in vault, so if does not affect you until you ping
-    /// change rewards_per_hour
-    pub fn set_rewards_per_hour(&mut self, new_value: u32) {
+    /// change rewards_per_year
+    pub fn set_rewards_per_year(&mut self, new_value: u32) {
         self.assert_owner_calling();
-        self.rewards_per_hour = new_value;
+        self.rewards_per_year = new_value;
     }
 
+    /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
+    pub fn get_contract_params(&self) -> ContractParams {
+        ContractParams {
+            owner_id: self.owner_id.clone(),
+            token_contract: self.cheddar_id.clone(),
+            rewards_per_year: self.rewards_per_year,
+            is_open: self.is_open,
+        }
+    }
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn status(&self, account_id: AccountId) -> (U128, U128) {
         match self.vaults.get(&account_id) {
@@ -82,7 +90,7 @@ impl Contract {
             Some(mut vault) => {
                 return (
                     vault.staked.into(),
-                    vault.ping(self.rewards_per_hour).into(),
+                    vault.ping(self.rewards_per_year).into(),
                 );
             }
         }
@@ -111,7 +119,7 @@ impl Contract {
                 return amount.into();
             }
             Some(mut vault) => {
-                vault.stake(amount, self.rewards_per_hour);
+                vault.stake(amount, self.rewards_per_year);
                 self.vaults.insert(&aid, &vault);
                 return vault.staked.into();
             }
@@ -127,7 +135,7 @@ impl Contract {
         assert_one_yocto();
         let amount = u128::from(amount);
         let (aid, mut vault) = self.get_vault();
-        vault.unstake(amount, self.rewards_per_hour);
+        vault.unstake(amount, self.rewards_per_year);
         assert!(
             vault.staked <= MIN_STAKE || vault.rewards != 0,
             "{}",
@@ -148,7 +156,7 @@ impl Contract {
     pub fn close(&mut self) -> U128 {
         assert_one_yocto();
         let (aid, mut vault) = self.get_vault();
-        vault.ping(self.rewards_per_hour);
+        vault.ping(self.rewards_per_year);
         env_log!(
             "Closing {} account, farmed CHEDDAR: {}",
             &aid,
@@ -167,10 +175,10 @@ impl Contract {
 
     #[payable]
     pub fn withdraw_crop(&mut self, amount: U128) {
-        let amount_n = u128::from(amount);
+        let amount_n = amount.0;
         assert!(amount_n > 0, "can't withdraw 0 tokens");
         let (aid, mut vault) = self.get_vault();
-        vault.ping(self.rewards_per_hour);
+        vault.ping(self.rewards_per_year);
         assert!(
             amount_n <= vault.rewards,
             "E20: not enough cheddar farmed, available: {}",
@@ -217,6 +225,7 @@ impl Contract {
                 let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
                 v.rewards += amount.0;
                 self.vaults.insert(&sender_id, &v);
+                env_log!("cheddar transfer failed")
             }
         };
     }
@@ -228,10 +237,7 @@ impl Contract {
         );
     }
     fn assert_open(&self) {
-        assert!(
-            self.is_open,
-            "Farming is not open"
-        );
+        assert!(self.is_open, "Farming is not open");
     }
 }
 

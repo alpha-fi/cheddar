@@ -1,4 +1,5 @@
 use near_sdk::json_types::U128;
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{ext_contract, AccountId};
 
 // #[ext_contract(ext_staking_pool)]
@@ -27,4 +28,12 @@ pub trait ExtStakingPool {
 #[ext_contract(ext_ft)]
 pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ContractParams {
+    pub owner_id: AccountId,
+    pub token_contract: AccountId,
+    pub is_open: bool,
+    pub rewards_per_year: u32,
 }

@@ -15,4 +15,4 @@ pub const NANO:u64 = 1_000_000_000;
 const MILLI_NEAR: Balance = 1000_000000_000000_000000;
 pub const MIN_STAKE: Balance = MILLI_NEAR * 10;
 
-pub const SECONDS_PER_HOUR:u16 = 3600;
+pub const SECONDS_PER_YEAR:u32 = 3600*24*365;
