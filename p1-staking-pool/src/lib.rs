@@ -229,55 +229,55 @@ mod tests {
         builder
     }
 
-    #[test]
-    fn test_new() {
-        let mut context = get_context(accounts(1));
-        testing_env!(context.build());
-        let contract = Contract::new(accounts(1).into(), OWNER_SUPPLY.into());
-        testing_env!(context.is_view(true).build());
-        assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
-        assert_eq!(contract.ft_balance_of(accounts(1)).0, OWNER_SUPPLY);
-    }
+    // #[test]
+    // fn test_new() {
+    //     let mut context = get_context(accounts(1));
+    //     testing_env!(context.build());
+    //     let contract = Contract::new(accounts(1).into(), OWNER_SUPPLY.into());
+    //     testing_env!(context.is_view(true).build());
+    //     assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
+    //     assert_eq!(contract.ft_balance_of(accounts(1)).0, OWNER_SUPPLY);
+    // }
 
-    #[test]
-    #[should_panic(expected = "The contract is not initialized")]
-    fn test_default() {
-        let context = get_context(accounts(1));
-        testing_env!(context.build());
-        let _contract = Contract::default();
-    }
+    // #[test]
+    // #[should_panic(expected = "The contract is not initialized")]
+    // fn test_default() {
+    //     let context = get_context(accounts(1));
+    //     testing_env!(context.build());
+    //     let _contract = Contract::default();
+    // }
 
-    #[test]
-    fn test_transfer() {
-        let mut context = get_context(accounts(2));
-        testing_env!(context.build());
-        let mut contract = Contract::new(accounts(2).into(), OWNER_SUPPLY.into());
-        testing_env!(context
-            .storage_usage(env::storage_usage())
-            .attached_deposit(contract.storage_balance_bounds().min.into())
-            .predecessor_account_id(accounts(1))
-            .build());
-        // Paying for account registration, aka storage deposit
-        contract.storage_deposit(None, None);
+    // #[test]
+    // fn test_transfer() {
+    //     let mut context = get_context(accounts(2));
+    //     testing_env!(context.build());
+    //     let mut contract = Contract::new(accounts(2).into(), OWNER_SUPPLY.into());
+    //     testing_env!(context
+    //         .storage_usage(env::storage_usage())
+    //         .attached_deposit(contract.storage_balance_bounds().min.into())
+    //         .predecessor_account_id(accounts(1))
+    //         .build());
+    //     // Paying for account registration, aka storage deposit
+    //     contract.storage_deposit(None, None);
 
-        testing_env!(context
-            .storage_usage(env::storage_usage())
-            .attached_deposit(1)
-            .predecessor_account_id(accounts(2))
-            .build());
-        let transfer_amount = OWNER_SUPPLY / 3;
-        contract.ft_transfer(accounts(1), transfer_amount.into(), None);
+    //     testing_env!(context
+    //         .storage_usage(env::storage_usage())
+    //         .attached_deposit(1)
+    //         .predecessor_account_id(accounts(2))
+    //         .build());
+    //     let transfer_amount = OWNER_SUPPLY / 3;
+    //     contract.ft_transfer(accounts(1), transfer_amount.into(), None);
 
-        testing_env!(context
-            .storage_usage(env::storage_usage())
-            .account_balance(env::account_balance())
-            .is_view(true)
-            .attached_deposit(0)
-            .build());
-        assert_eq!(
-            contract.ft_balance_of(accounts(2)).0,
-            (OWNER_SUPPLY - transfer_amount)
-        );
-        assert_eq!(contract.ft_balance_of(accounts(1)).0, transfer_amount);
-    }
+    //     testing_env!(context
+    //         .storage_usage(env::storage_usage())
+    //         .account_balance(env::account_balance())
+    //         .is_view(true)
+    //         .attached_deposit(0)
+    //         .build());
+    //     assert_eq!(
+    //         contract.ft_balance_of(accounts(2)).0,
+    //         (OWNER_SUPPLY - transfer_amount)
+    //     );
+    //     assert_eq!(contract.ft_balance_of(accounts(1)).0, transfer_amount);
+    // }
 }
