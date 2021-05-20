@@ -257,7 +257,12 @@ mod tests {
 
     use super::*;
 
-    fn setup_contract(account_id: usize, deposit: u128) -> (VMContextBuilder, Contract) {
+    /// deposit_dec =
+    fn setup_contract(
+        account_id: usize,
+        deposit_dec: u128,
+        time: u64,
+    ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
         let contract = Contract::new(
@@ -269,14 +274,15 @@ mod tests {
         );
         testing_env!(context
             .predecessor_account_id(accounts(account_id))
-            .attached_deposit(deposit)
+            .attached_deposit((deposit_dec * MIN_STAKE / 10).into())
+            .block_timestamp(time)
             .build());
         (context, contract)
     }
 
     #[test]
     fn test_set_active() {
-        let (_, mut ctr) = setup_contract(0, 0);
+        let (_, mut ctr) = setup_contract(0, 5, 1);
         assert_eq!(ctr.is_active, true);
         ctr.set_active(false);
         assert_eq!(ctr.is_active, false);
@@ -285,8 +291,31 @@ mod tests {
     #[test]
     #[should_panic(expected = "can only be called by the owner")]
     fn test_set_active_not_admin() {
-        let (_, mut ctr) = setup_contract(1, 0);
+        let (_, mut ctr) = setup_contract(1, 0, 1);
         ctr.set_active(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "E01: min stake amount is 0.01 NEAR")]
+    fn test_min_staking() {
+        let (_, mut ctr) = setup_contract(1, 5, 1);
+        ctr.stake();
+    }
+
+    #[test]
+    fn test_staking() {
+        let (_, mut ctr) = setup_contract(1, 100, 1);
+        ctr.stake();
+
+        let mut s = ctr.status(get_acc(0));
+        assert_eq!(s.0 .0, 0, "account(0) didn't stake");
+        assert_eq!(s.1 .0, 0, "account(0) didn't stake so no cheddar");
+
+        s = ctr.status(get_acc(1));
+        assert_eq!(s.0 .0, 10 * MIN_STAKE, "account(0) staked");
+        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded in the same round");
+
+        // assert_eq!(s.1 == "0", "staked cheddar check");
     }
 
     // #[test]
@@ -330,4 +359,8 @@ mod tests {
     //     );
     //     assert_eq!(contract.ft_balance_of(accounts(1)).0, transfer_amount);
     // }
+
+    fn get_acc(idx: usize) -> AccountId {
+        accounts(idx).as_ref().to_string()
+    }
 }

@@ -11,7 +11,7 @@ use crate::Contract;
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 #[cfg_attr(feature = "test", derive(Clone))]
 pub struct Vault {
-    // env::block_timestamp for the last time ping was called
+    // epoch when the last time ping was called
     pub previous: u64,
     /// amount of $near locked in this vault
     pub staked: Balance,
