@@ -1,10 +1,10 @@
 //! Account deposit is information per user about their balances in the exchange.
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{AccountId, Balance};
+use near_sdk::Balance;
 
-use crate::*;
-use util::U256;
+use crate::errors::*;
+use crate::util::*;
 
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 #[cfg_attr(feature = "test", derive(Clone))]
@@ -22,39 +22,33 @@ impl Vault {
     Update rewards for locked tokens in past epochs
     returns total rewards
     */
-    pub(crate) fn ping(&mut self, rewards_per_year: u32) -> u128 {
-        if self.previous != 0 {
-            let current = env::block_timestamp(); //nanoseconds
-            assert!(current >= self.previous);
-            let delta_seconds = (current - self.previous) / NANO;
-            if delta_seconds > 0 {
-                self.rewards += (U256::from(delta_seconds)
-                    * U256::from(rewards_per_year)
-                    * U256::from(self.staked)
-                    / U256::from(SECONDS_PER_YEAR))
+    pub(crate) fn ping(&mut self, emission_rate: u128, total_stake: u128) -> u128 {
+        assert!(
+            self.previous != 0,
+            "Previously registered epoch can't be zero"
+        );
+        let now = current_epoch();
+        // TODO: add start epoch control.
+
+        let delta = now - self.previous;
+        if delta > 0 {
+            self.rewards +=
+                (U256::from(delta) * U256::from(emission_rate) * U256::from(self.staked)
+                    / U256::from(total_stake))
                 .as_u128();
-                self.previous = current;
-            }
+            self.previous = now;
         }
         self.rewards
     }
 
-    pub(crate) fn stake(&mut self, amount: Balance, rewards_per_year: u32) {
-        self.ping(rewards_per_year);
+    pub(crate) fn stake(&mut self, amount: Balance, emission_rate: u128, total_stake: u128) {
+        self.ping(emission_rate, total_stake);
         self.staked += amount;
     }
 
-    pub(crate) fn unstake(&mut self, amount: Balance, rewards_per_year: u32) {
+    pub(crate) fn unstake(&mut self, amount: Balance, emission_rate: u128, total_stake: u128) {
         assert!(self.staked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
-        self.ping(rewards_per_year);
+        self.ping(emission_rate, total_stake);
         self.staked -= amount;
-    }
-}
-
-impl Contract {
-    pub fn get_vault(&self) -> (AccountId, Vault) {
-        let a = env::predecessor_account_id();
-        let v = self.vaults.get(&a).expect(ERR10_NO_ACCOUNT);
-        (a, v)
     }
 }
