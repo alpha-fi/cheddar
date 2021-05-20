@@ -55,7 +55,7 @@ impl Contract {
         Self {
             owner_id: owner_id.into(),
             cheddar_id: cheddar_id.into(),
-            is_active: false,
+            is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
             emission_rate,
             total_stake: 0,
@@ -231,6 +231,7 @@ impl Contract {
             "can only be called by the owner"
         );
     }
+
     fn assert_open(&self) {
         assert!(self.is_active, "Farming is not open");
     }
@@ -252,29 +253,41 @@ mod tests {
     use near_sdk::test_utils::{accounts, VMContextBuilder};
     use near_sdk::MockedBlockchain;
     use near_sdk::{testing_env, Balance};
+    use std::convert::TryInto;
 
     use super::*;
 
-    const OWNER_SUPPLY: Balance = 1_000_000_000_000_000;
-
-    fn get_context(predecessor_account_id: ValidAccountId) -> VMContextBuilder {
-        let mut builder = VMContextBuilder::new();
-        builder
-            .current_account_id(accounts(0))
-            .signer_account_id(predecessor_account_id.clone())
-            .predecessor_account_id(predecessor_account_id);
-        builder
+    fn setup_contract(account_id: usize, deposit: u128) -> (VMContextBuilder, Contract) {
+        let mut context = VMContextBuilder::new();
+        testing_env!(context.build());
+        let contract = Contract::new(
+            accounts(0),
+            "cheddar".to_string().try_into().unwrap(),
+            120000,
+            10 * EPOCH,
+            20 * EPOCH,
+        );
+        testing_env!(context
+            .predecessor_account_id(accounts(account_id))
+            .attached_deposit(deposit)
+            .build());
+        (context, contract)
     }
 
-    // #[test]
-    // fn test_new() {
-    //     let mut context = get_context(accounts(1));
-    //     testing_env!(context.build());
-    //     let contract = Contract::new(accounts(1).into(), OWNER_SUPPLY.into());
-    //     testing_env!(context.is_view(true).build());
-    //     assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
-    //     assert_eq!(contract.ft_balance_of(accounts(1)).0, OWNER_SUPPLY);
-    // }
+    #[test]
+    fn test_set_active() {
+        let (_, mut ctr) = setup_contract(0, 0);
+        assert_eq!(ctr.is_active, true);
+        ctr.set_active(false);
+        assert_eq!(ctr.is_active, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "can only be called by the owner")]
+    fn test_set_active_not_admin() {
+        let (_, mut ctr) = setup_contract(1, 0);
+        ctr.set_active(false);
+    }
 
     // #[test]
     // #[should_panic(expected = "The contract is not initialized")]
