@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+use std::{cmp, convert::TryInto};
 
 // use near_contract_standards::storage_management::{
 //     StorageBalance, StorageBalanceBounds, StorageManagement,
@@ -116,7 +116,7 @@ impl Contract {
                 self.vaults.insert(
                     &aid,
                     &Vault {
-                        previous: current_epoch(),
+                        previous: cmp::max(current_epoch(), self.farming_start),
                         staked: amount,
                         rewards: 0,
                     },
@@ -269,13 +269,13 @@ mod tests {
             accounts(0),
             "cheddar".to_string().try_into().unwrap(),
             120000,
-            10 * EPOCH,
-            20 * EPOCH,
+            10,
+            20,
         );
         testing_env!(context
             .predecessor_account_id(accounts(account_id))
             .attached_deposit((deposit_dec * MIN_STAKE / 10).into())
-            .block_timestamp(time)
+            .block_timestamp(time * EPOCH)
             .build());
         (context, contract)
     }
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_staking() {
-        let (_, mut ctr) = setup_contract(1, 100, 1);
+        let (mut ctx, mut ctr) = setup_contract(1, 100, 1);
         ctr.stake();
 
         let mut s = ctr.status(get_acc(0));
@@ -312,53 +312,49 @@ mod tests {
         assert_eq!(s.1 .0, 0, "account(0) didn't stake so no cheddar");
 
         s = ctr.status(get_acc(1));
-        assert_eq!(s.0 .0, 10 * MIN_STAKE, "account(0) staked");
-        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded in the same round");
+        assert_eq!(s.0 .0, 10 * MIN_STAKE, "account(1) staked");
+        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
 
-        // assert_eq!(s.1 == "0", "staked cheddar check");
+        // stake before the farming_start
+
+        testing_env!(ctx
+            .attached_deposit((100 * MIN_STAKE / 10).into())
+            .block_timestamp(2 * EPOCH)
+            .build());
+        ctr.stake();
+        /*        s = ctr.status(get_acc(1));
+                assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake increased");
+                assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
+
+                // at the start we still shouldn't get any reward.
+
+                testing_env!(ctx.block_timestamp(10 * EPOCH + 1).build());
+                s = ctr.status(get_acc(1));
+                assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake increased");
+                assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
+        */
+        // Staking at the very beginning wont yeild rewars - a whole epoch needs to pass first
+        testing_env!(ctx.block_timestamp(10 * EPOCH).build());
+        s = ctr.status(get_acc(1));
+        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
+        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
+
+        // WE are alone - we should get 100% of emission.
+
+        testing_env!(ctx.block_timestamp(11 * EPOCH).build());
+        s = ctr.status(get_acc(1));
+        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
+        assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");
+
+        // second check in same epoch shouldn't change rewards:
+
+        testing_env!(ctx.block_timestamp(11 * EPOCH + 100).build());
+        s = ctr.status(get_acc(1));
+        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
+        assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");
+
+        // TODO: add more tests
     }
-
-    // #[test]
-    // #[should_panic(expected = "The contract is not initialized")]
-    // fn test_default() {
-    //     let context = get_context(accounts(1));
-    //     testing_env!(context.build());
-    //     let _contract = Contract::default();
-    // }
-
-    // #[test]
-    // fn test_transfer() {
-    //     let mut context = get_context(accounts(2));
-    //     testing_env!(context.build());
-    //     let mut contract = Contract::new(accounts(2).into(), OWNER_SUPPLY.into());
-    //     testing_env!(context
-    //         .storage_usage(env::storage_usage())
-    //         .attached_deposit(contract.storage_balance_bounds().min.into())
-    //         .predecessor_account_id(accounts(1))
-    //         .build());
-    //     // Paying for account registration, aka storage deposit
-    //     contract.storage_deposit(None, None);
-
-    //     testing_env!(context
-    //         .storage_usage(env::storage_usage())
-    //         .attached_deposit(1)
-    //         .predecessor_account_id(accounts(2))
-    //         .build());
-    //     let transfer_amount = OWNER_SUPPLY / 3;
-    //     contract.ft_transfer(accounts(1), transfer_amount.into(), None);
-
-    //     testing_env!(context
-    //         .storage_usage(env::storage_usage())
-    //         .account_balance(env::account_balance())
-    //         .is_view(true)
-    //         .attached_deposit(0)
-    //         .build());
-    //     assert_eq!(
-    //         contract.ft_balance_of(accounts(2)).0,
-    //         (OWNER_SUPPLY - transfer_amount)
-    //     );
-    //     assert_eq!(contract.ft_balance_of(accounts(1)).0, transfer_amount);
-    // }
 
     fn get_acc(idx: usize) -> AccountId {
         accounts(idx).as_ref().to_string()

@@ -13,7 +13,7 @@ construct_uint! {
 }
 
 pub fn current_epoch() -> u64 {
-    (env::block_timestamp() + EPOCH - 1) / EPOCH
+    env::block_timestamp() / EPOCH
 }
 
 // returns amount * numerator/denominator
