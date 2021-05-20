@@ -87,10 +87,7 @@ impl Contract {
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn status(&self, account_id: AccountId) -> (U128, U128) {
         return match self.vaults.get(&account_id) {
-            Some(mut v) => (
-                v.staked.into(),
-                v.ping(self.emission_rate, self.total_stake).into(),
-            ),
+            Some(mut v) => (v.staked.into(), self.ping(&mut v).into()),
             None => {
                 let zero = U128::from(0);
                 return (zero, zero);
@@ -155,7 +152,7 @@ impl Contract {
     pub fn close(&mut self) -> U128 {
         assert_one_yocto();
         let (aid, mut vault) = self.get_vault();
-        vault.ping(self.emission_rate, self.total_stake);
+        self.ping(&mut vault);
         env_log!(
             "Closing {} account, farmed CHEDDAR: {}",
             &aid,
@@ -179,7 +176,7 @@ impl Contract {
     #[payable]
     pub fn withdraw_crop(&mut self) -> U128 {
         let (aid, mut vault) = self.get_vault();
-        vault.ping(self.emission_rate, self.total_stake);
+        self.ping(&mut vault);
         let rewards = vault.rewards;
         vault.rewards = 0;
         self.vaults.insert(&aid, &vault);
