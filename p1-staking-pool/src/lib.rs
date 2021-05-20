@@ -30,37 +30,48 @@ pub struct Contract {
     /// farm token
     pub cheddar_id: AccountId,
     // if farming is opened
-    pub is_open: bool,
+    pub is_active: bool,
     //user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`EPOCH`)
     /// Farmed $CHEDDAR are distributed to all users proportionally to thier NEAR stake.
     pub emission_rate: u128,
     pub total_stake: u128,
+    pub farming_start: u64,
+    pub farming_end: u64,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year
     #[init]
-    pub fn new(owner_id: ValidAccountId, cheddar_id: ValidAccountId, emission_rate: u128) -> Self {
+    pub fn new(
+        owner_id: ValidAccountId,
+        cheddar_id: ValidAccountId,
+        emission_rate: u128,
+        farming_start: u64,
+        farming_end: u64,
+    ) -> Self {
         Self {
             owner_id: owner_id.into(),
             cheddar_id: cheddar_id.into(),
-            is_open: false,
+            is_active: false,
             vaults: LookupMap::new(b"v".to_vec()),
             emission_rate,
             total_stake: 0,
+            farming_start,
+            farming_end,
         }
     }
 
     // ************ //
     // view methods //
 
-    /// opens or closes the farming
-    pub fn set_open(&mut self, is_open: bool) {
+    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
+    /// `epoch_end` attributes which controls start and end of the farming.
+    pub fn set_active(&mut self, is_open: bool) {
         self.assert_owner_calling();
-        self.is_open = is_open;
+        self.is_active = is_open;
     }
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
@@ -69,7 +80,7 @@ impl Contract {
             owner_id: self.owner_id.clone(),
             token_contract: self.cheddar_id.clone(),
             emission_rate: self.emission_rate.into(),
-            is_open: self.is_open,
+            is_open: self.is_active,
         }
     }
 
@@ -100,7 +111,7 @@ impl Contract {
         match self.vaults.get(&aid) {
             Some(mut vault) => {
                 self.total_stake += amount;
-                vault.stake(amount, self.emission_rate, self.total_stake);
+                self._stake(amount, &mut vault);
                 self.vaults.insert(&aid, &vault);
                 return vault.staked.into();
             }
@@ -127,12 +138,7 @@ impl Contract {
         assert_one_yocto();
         let amount = u128::from(amount);
         let (aid, mut vault) = self.get_vault();
-        vault.unstake(amount, self.emission_rate, self.total_stake);
-        assert!(
-            vault.staked <= MIN_STAKE || vault.rewards != 0,
-            "{}",
-            ERR02_MIN_BALANCE
-        );
+        self._unstake(amount, &mut vault);
 
         self.total_stake -= amount;
         self.vaults.insert(&aid, &vault);
@@ -184,12 +190,6 @@ impl Contract {
     /*****************
      * internal methods */
 
-    fn get_vault(&self) -> (AccountId, Vault) {
-        let a = env::predecessor_account_id();
-        let v = self.vaults.get(&a).expect(ERR10_NO_ACCOUNT);
-        (a, v)
-    }
-
     fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128) -> Promise {
         ext_ft::ft_transfer(
             a.clone().try_into().unwrap(),
@@ -235,7 +235,7 @@ impl Contract {
         );
     }
     fn assert_open(&self) {
-        assert!(self.is_open, "Farming is not open");
+        assert!(self.is_active, "Farming is not open");
     }
 }
 
