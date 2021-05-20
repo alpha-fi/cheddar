@@ -1,5 +1,8 @@
 //use near_sdk::json_types::{U128, U64};
+use near_sdk::env;
 use uint::construct_uint;
+
+use crate::constants::EPOCH;
 
 // pub type U128String = U128;
 // pub type U64String = U64;
@@ -7,6 +10,10 @@ use uint::construct_uint;
 construct_uint! {
     /// 256-bit unsigned integer.
     pub struct U256(4);
+}
+
+pub fn current_epoch() -> u64 {
+    (env::block_timestamp() + EPOCH - 1) / EPOCH
 }
 
 // returns amount * numerator/denominator

@@ -35,5 +35,5 @@ pub struct ContractParams {
     pub owner_id: AccountId,
     pub token_contract: AccountId,
     pub is_open: bool,
-    pub rewards_per_year: u32,
+    pub emission_rate: U128,
 }
