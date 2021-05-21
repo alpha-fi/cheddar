@@ -40,9 +40,9 @@ pub struct Contract {
     /// total_stake_acc accumulates a total stake for the next round we can only
     pub stake_acc: u128, // VecDeque<u128>,
     /// round number when the farming starts
-    pub farming_start: u64,
+    pub farming_start: Round,
     /// round number when the farming ends (first round round with no farming)
-    pub farming_end: u64,
+    pub farming_end: Round,
 }
 
 #[near_bindgen]
