@@ -35,14 +35,15 @@ impl Contract {
             v.previous != 0,
             "Wrong state. Previously registered epoch can't be zero"
         );
-        let now = current_epoch();
+        let unix_timestamp = env::block_timestamp() / 1_000_000_000 as u64;
         // if farming doesn't started, ignore the rewards update
-        if now < self.farming_end {
+        if  unix_timestamp < self.farming_start {
             return 0;
         }
-        if now > self.farming_end {
+        if unix_timestamp > self.farming_end {
             return v.rewards;
         }
+        let now = current_epoch();
         let delta = now - v.previous;
         if delta > 0 {
             v.rewards +=
@@ -51,7 +52,7 @@ impl Contract {
                 .as_u128();
             v.previous = now;
         }
-        return v.rewards;
+        return v.rewards
     }
 
     pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {

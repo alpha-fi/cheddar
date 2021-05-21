@@ -10,9 +10,9 @@ pub const NO_DEPOSIT: Balance = 0;
 pub const ONE_YOCTO: Balance = 1;
 
 /// one second in nanoseconds
-pub const SECOND: u64 = 1_000_000_000;
-/// epoch = 1 minute
-pub const EPOCH: u64 = 60 * SECOND;
+pub const NANOSECONDS: u64 = 1_000_000_000;
+/// round = 1 minute
+pub const ROUND: u64 = 60 * NANOSECONDS;
 
 // 1/10_000 of a NEAR
 const MILLI_NEAR: Balance = 1000_000000_000000_000000;

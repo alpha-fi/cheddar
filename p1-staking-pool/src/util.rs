@@ -2,7 +2,7 @@
 use near_sdk::env;
 use uint::construct_uint;
 
-use crate::constants::EPOCH;
+use crate::constants::ROUND;
 
 // pub type U128String = U128;
 // pub type U64String = U64;
@@ -13,7 +13,7 @@ construct_uint! {
 }
 
 pub fn current_epoch() -> u64 {
-    (env::block_timestamp() + EPOCH - 1) / EPOCH
+    (env::block_timestamp() + ROUND - 1) / ROUND
 }
 
 // returns amount * numerator/denominator
