@@ -18,11 +18,11 @@ pub fn current_round() -> u64 {
 }
 
 pub fn round_from_unix(unix_timestamp: u64) -> u64 {
-    unix_timestamp / SEC_PER_ROUND
+    unix_timestamp * SEC_PER_ROUND
 }
 
 pub fn round_to_unix(round: u64) -> u64 {
-    round * SEC_PER_ROUND
+    round / SEC_PER_ROUND
 }
 
 // returns amount * numerator/denominator

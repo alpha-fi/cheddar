@@ -28,7 +28,7 @@ impl Contract {
 
     /**
     Update rewards for locked tokens in past epochs
-    returns total rewards
+    returns total account rewards
      */
     pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
         assert!(
@@ -36,10 +36,6 @@ impl Contract {
             "Wrong state. Previously registered epoch can't be zero"
         );
         let now = current_round();
-        print!(
-            "IN PING, epoch={}, farming_start_round={}\n",
-            now, self.farming_start
-        );
         // if farming doesn't started, ignore the rewards update
         if now < self.farming_start {
             return 0;
@@ -49,22 +45,22 @@ impl Contract {
         }
         let now = current_round();
         let delta = now - v.previous;
-        print!(
-            "PING: after previous_epoch={}, delta={}\n",
-            v.previous, delta,
-        );
         if delta > 0 {
-            v.rewards +=
+            let farmed =
                 (U256::from(delta) * U256::from(self.emission_rate) * U256::from(v.staked)
                     / U256::from(self.total_stake))
                 .as_u128();
+            v.rewards += farmed;
+            println!(
+                "FARMING {}, delta={}, emission_rate={}, total={}, user={}",
+                farmed, delta, self.emission_rate, self.total_stake, v.staked
+            );
             v.previous = now;
         }
         return v.rewards;
     }
 
     pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {
-        println!("Stakiong {}", amount);
         self.ping(v);
         v.staked += amount;
     }

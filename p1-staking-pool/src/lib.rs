@@ -50,7 +50,7 @@ impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
     /// * farming_start & farming_end are unix timestamps
-    /// * emission_rate is yoctoCheddars per minute
+    /// * emission_rate is yoctoCheddars per round
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -64,7 +64,7 @@ impl Contract {
             cheddar_id: cheddar_id.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            emission_rate: (emission_rate.0 / ROUNDS_PER_MINUTE as u128).into(),
+            emission_rate: emission_rate.0,
             total_stake: 0,
             stake_acc: VecDeque::new(),
             farming_start: round_from_unix(farming_start),
