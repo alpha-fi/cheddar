@@ -286,7 +286,7 @@ mod tests {
     fn setup_contract(
         account_id: usize,
         deposit_dec: u128,
-        time: u64,
+        round: u64,
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
@@ -300,7 +300,7 @@ mod tests {
         testing_env!(context
             .predecessor_account_id(accounts(account_id))
             .attached_deposit((deposit_dec * MIN_STAKE / 10).into())
-            .block_timestamp(time * ROUND)
+            .block_timestamp(round * ROUND)
             .build());
         (context, contract)
     }
@@ -429,6 +429,49 @@ mod tests {
 
         assert_eq!(a1_s.0 + a2_s.0, ctr.total_stake);
         // TODO: add more tests
+    }
+
+    #[test]
+    fn test_staking_accumulate() {
+        let (mut ctx, mut ctr) = setup_contract(1, 100, 5);
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
+        ctr.stake();
+
+        // ------------------------------------------------
+        // at round 12 stake same amount with 2 other accounts
+        // NOTE: we start farming at round 10
+
+        testing_env!(ctx
+            .predecessor_account_id(accounts(2))
+            .block_timestamp(12 * ROUND)
+            .build());
+        ctr.stake();
+        testing_env!(ctx
+            .predecessor_account_id(accounts(2))
+            .block_timestamp(12 * ROUND)
+            .build());
+        ctr.stake();
+
+        // ------------------------------------------------
+        // check the rewards at round 14
+
+        testing_env!(ctx
+            .predecessor_account_id(accounts(2))
+            .block_timestamp(14 * ROUND)
+            .build());
+
+        assert_eq!(
+            ctr.total_stake,
+            3 * 10 * MIN_STAKE,
+            "each account staked the same amount"
+        );
+
+        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 10 * MIN_STAKE, "account1 stake is correct");
+        assert_eq!(a1_r.0, 2 * 120_000 + 2 * 40_000, "account1 reward");
     }
 
     fn get_acc(idx: usize) -> AccountId {
