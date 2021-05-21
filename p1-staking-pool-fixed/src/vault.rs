@@ -35,15 +35,14 @@ impl Contract {
             v.previous != 0,
             "Wrong state. Previously registered epoch can't be zero"
         );
-        let now = current_round();
+        let mut now = current_round();
         // if farming doesn't started, ignore the rewards update
         if now < self.farming_start {
             return 0;
         }
         if now >= self.farming_end {
-            return v.rewards;
+            now = self.farming_end;
         }
-        let now = current_round();
         let delta = now - v.previous;
         if delta > 0 {
             let farmed =
