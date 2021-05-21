@@ -33,7 +33,7 @@ pub struct Contract {
     pub is_active: bool,
     //user vaults
     pub vaults: LookupMap<AccountId, Vault>,
-    /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`EPOCH`)
+    /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`ROUND`)
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
     pub emission_rate: u128,
     pub total_stake: u128,
@@ -91,7 +91,11 @@ impl Contract {
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
         return match self.vaults.get(&account_id) {
-            Some(mut v) => (v.staked.into(), self.ping(&mut v).into(), unix_timestamp_from(current_round())),
+            Some(mut v) => (
+                v.staked.into(),
+                self.ping(&mut v).into(),
+                unix_timestamp_from(current_round()),
+            ),
             None => {
                 let zero = U128::from(0);
                 return (zero, zero, 0);
@@ -110,6 +114,7 @@ impl Contract {
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
         self.total_stake += amount;
         let aid = env::predecessor_account_id();
+        self.total_stake += amount;
         match self.vaults.get(&aid) {
             Some(mut vault) => {
                 self._stake(amount, &mut vault);
@@ -169,8 +174,13 @@ impl Contract {
         self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
-        //assert!(self.total_stake >= vault.staked,"total_staked {} < vault.staked {}", self.total_stake, vault.staked);
-        self.total_stake = self.total_stake.saturating_sub(vault.staked);
+        assert!(
+            self.total_stake >= vault.staked,
+            "total_staked {} < vault.staked {}",
+            self.total_stake,
+            vault.staked
+        );
+        self.total_stake -= vault.staked;
         let callback = self.withdraw_cheddar(&aid, rewards_str);
         Promise::new(aid).transfer(vault.staked).and(callback);
 
@@ -314,16 +324,27 @@ mod tests {
     #[test]
     fn test_staking() {
         let (mut ctx, mut ctr) = setup_contract(1, 100, 1);
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
+
         ctr.stake();
 
-        let mut s = ctr.status(get_acc(0));
-        assert_eq!(s.0 .0, 0, "account(0) didn't stake");
-        assert_eq!(s.1 .0, 0, "account(0) didn't stake so no cheddar");
+        // status returns (account_stake, account_rewards)
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(0));
+        assert_eq!(a1_s.0, 0, "account0 didn't stake");
+        assert_eq!(a1_r.0, 0, "account0 didn't stake so no cheddar");
 
-        s = ctr.status(get_acc(1));
-        assert_eq!(s.0 .0, 10 * MIN_STAKE, "account(1) staked");
-        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 10 * MIN_STAKE, "account1 staked");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to account1 stake"
+        );
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
+        // ------------------------------------------------
         // stake before the farming_start
 
         testing_env!(ctx
@@ -331,37 +352,74 @@ mod tests {
             .block_timestamp(2 * ROUND)
             .build());
         ctr.stake();
-        /*        s = ctr.status(get_acc(1));
-                assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake increased");
-                assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
 
-                // at the start we still shouldn't get any reward.
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake increased");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to account1 stake"
+        );
 
-                testing_env!(ctx.block_timestamp(10 * EPOCH + 1).build());
-                s = ctr.status(get_acc(1));
-                assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake increased");
-                assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
-        */
-        // Staking at the very beginning wont yield rewards - a whole epoch needs to pass first
+        // ------------------------------------------------
+        // at the start we still shouldn't get any reward.
+
+        testing_env!(ctx.block_timestamp(10 * ROUND + 1).build());
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake increased");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
+
+        // ------------------------------------------------
+        // Staking at the very beginning wont yeild rewars - a whole epoch needs to pass first
+
         testing_env!(ctx.block_timestamp(10 * ROUND).build());
-        s = ctr.status(get_acc(1));
-        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
-        assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
+        // ------------------------------------------------
         // WE are alone - we should get 100% of emission.
 
         testing_env!(ctx.block_timestamp(11 * ROUND).build());
-        s = ctr.status(get_acc(1));
-        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
-        assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 120_000, "we take all harvest");
 
-        // second check in same epoch shouldn't change rewards:
+        // ------------------------------------------------
+        // second check in same epoch shouldn't change rewards
 
         testing_env!(ctx.block_timestamp(11 * ROUND + 100).build());
-        s = ctr.status(get_acc(1));
-        assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
-        assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake didn't change");
+        assert_eq!(
+            a1_r.0, 120_000,
+            "in the same epoch we should harvest only once"
+        );
 
+        // ------------------------------------------------
+        // 2 epochs later we add another account to stake
+
+        testing_env!(ctx
+            .predecessor_account_id(accounts(2))
+            .attached_deposit((5 * MIN_STAKE).into())
+            .block_timestamp(13 * ROUND)
+            .build());
+        ctr.stake();
+
+        let (a1_s, a1_r, ts) = ctr.status(get_acc(1));
+        assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake didn't change");
+        // TODO: fix
+        // assert_eq!(
+        //     a1_r.0,
+        //     120_000 * 2,
+        //     "in the same epoch we should harvest only once"
+        // );
+
+        let (a2_s, a2_r, ts) = ctr.status(get_acc(2));
+        assert_eq!(a2_s.0, 5 * MIN_STAKE, "account2 stake was set correctly");
+        assert_eq!(a2_r.0, 0, "account2 didn't farm anything yet");
+
+        assert_eq!(a1_s.0 + a2_s.0, ctr.total_stake);
         // TODO: add more tests
     }
 
