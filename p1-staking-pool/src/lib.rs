@@ -161,7 +161,7 @@ impl Contract {
         self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
-        self.total_stake -= vault.rewards;
+        self.total_stake -= vault.staked;
         let callback = self.withdraw_cheddar(&aid, rewards_str);
         Promise::new(aid).transfer(vault.staked).and(callback);
 
