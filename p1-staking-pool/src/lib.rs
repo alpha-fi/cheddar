@@ -118,7 +118,6 @@ impl Contract {
         self.assert_open();
         let amount = env::attached_deposit();
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
-        self.total_stake += amount;
         let aid = env::predecessor_account_id();
         self.total_stake += amount;
         match self.vaults.get(&aid) {
@@ -283,7 +282,7 @@ mod tests {
 
     use super::*;
 
-    /// deposit_dec =
+    /// deposit_dec = size of deposit in 0.1 MIN_STAKE.
     fn setup_contract(
         account_id: usize,
         deposit_dec: u128,

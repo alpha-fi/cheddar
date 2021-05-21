@@ -64,6 +64,7 @@ impl Contract {
     }
 
     pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {
+        println!("Stakiong {}", amount);
         self.ping(v);
         v.staked += amount;
     }
