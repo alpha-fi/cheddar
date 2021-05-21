@@ -114,7 +114,6 @@ impl Contract {
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
         self.total_stake += amount;
         let aid = env::predecessor_account_id();
-        self.total_stake += amount;
         match self.vaults.get(&aid) {
             Some(mut vault) => {
                 self._stake(amount, &mut vault);

@@ -12,14 +12,17 @@ export NODE_ENV=$NETWORK
 E6="000000"
 E12=$E6$E6
 YOCTO=$E12$E12
-NANO="000000000"
+
+CHEDDAR_PER_MINUTE=120
+FARMING_START=1621636200
+FARMING_END=1623450600
 
 ## delete acc
 echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
 read input
 near delete $CONTRACT_ACC $MASTER_ACC
 near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
-near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"emission_rate\":\"120$YOCTO\", \"farming_start\":1621566000, \"farming_end\":1622343600}" --accountId $MASTER_ACC
+near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"emission_rate\":\"$CHEDDAR_PER_MINUTE$YOCTO\", \"farming_start\":$FARMING_START, \"farming_end\":$FARMING_END}" --accountId $MASTER_ACC
 
 ##redeploy only
 #near deploy $CONTRACT_ACC $WASM  --accountId $MASTER_ACC
