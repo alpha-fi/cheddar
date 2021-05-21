@@ -1,4 +1,4 @@
-use std::{cmp, collections::VecDeque, convert::TryInto};
+use std::{cmp, convert::TryInto};
 
 // use near_contract_standards::storage_management::{
 //     StorageBalance, StorageBalanceBounds, StorageManagement,
@@ -38,7 +38,7 @@ pub struct Contract {
     pub emission_rate: u128,
     pub total_stake: u128,
     /// total_stake_acc accumulates a total stake for the next round we can only
-    pub stake_acc: VecDeque<u128>,
+    pub stake_acc: u128, // VecDeque<u128>,
     /// round number when the farming starts
     pub farming_start: u64,
     /// round number when the farming ends (first round round with no farming)
@@ -66,7 +66,7 @@ impl Contract {
             vaults: LookupMap::new(b"v".to_vec()),
             emission_rate: emission_rate.0,
             total_stake: 0,
-            stake_acc: VecDeque::new(),
+            stake_acc: 0, // VecDeque::new(),
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
         }
@@ -407,23 +407,25 @@ mod tests {
 
         testing_env!(ctx
             .predecessor_account_id(accounts(2))
-            .attached_deposit((5 * MIN_STAKE).into())
+            .attached_deposit(a1_s.0) // let's stake the same amount.
             .block_timestamp(13 * ROUND)
             .build());
         ctr.stake();
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
         assert_eq!(a1_s.0, 20 * MIN_STAKE, "account1 stake didn't change");
-        // TODO: fix
-        // assert_eq!(
-        //     a1_r.0,
-        //     120_000 * 2,
-        //     "in the same epoch we should harvest only once"
-        // );
+        assert_eq!(
+            a1_r.0,
+            120_000 * 2,
+            "farming is always after full round, so acc2 starts farming next round"
+        );
 
         let (a2_s, a2_r, _) = ctr.status(get_acc(2));
         assert_eq!(a2_s.0, 5 * MIN_STAKE, "account2 stake was set correctly");
-        assert_eq!(a2_r.0, 0, "account2 didn't farm anything yet");
+        assert_eq!(
+            a2_r.0, 0,
+            "account2 can only start farming in the next round"
+        );
 
         assert_eq!(a1_s.0 + a2_s.0, ctr.total_stake);
         // TODO: add more tests
