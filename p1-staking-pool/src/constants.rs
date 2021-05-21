@@ -11,8 +11,9 @@ pub const ONE_YOCTO: Balance = 1;
 
 /// one second in nanoseconds
 pub const NANOSECONDS: u64 = 1_000_000_000;
-/// round = 1 minute
-pub const ROUND: u64 = 60 * NANOSECONDS;
+/// how many nanoseconds in a round
+pub const ROUND: u64 = NANOSECONDS; // 100 milliseconds
+pub const ROUNDS_PER_MINUTE: u64 = 60; // 1 minute of rounds
 
 // 1/10_000 of a NEAR
 const MILLI_NEAR: Balance = 1000_000000_000000_000000;

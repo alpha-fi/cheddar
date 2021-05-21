@@ -19,7 +19,7 @@ pub mod vault;
 use crate::errors::*;
 use crate::interfaces::*;
 use crate::vault::*;
-use crate::{constants::*, util::current_epoch};
+use crate::{constants::*, util::*};
 
 near_sdk::setup_alloc!();
 
@@ -34,16 +34,18 @@ pub struct Contract {
     //user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`EPOCH`)
-    /// Farmed $CHEDDAR are distributed to all users proportionally to thier NEAR stake.
+    /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
     pub emission_rate: u128,
     pub total_stake: u128,
-    pub farming_start: u64,
-    pub farming_end: u64,
+    pub farming_start_round: u64,
+    pub farming_end_round: u64,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year
+    /// farming_start & farming_end are unix timestamps
+    /// emission_rate is yoctoCheddars per minute
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -57,10 +59,10 @@ impl Contract {
             cheddar_id: cheddar_id.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            emission_rate: emission_rate.into(),
+            emission_rate: (emission_rate.0 / ROUNDS_PER_MINUTE as u128).into(),
             total_stake: 0,
-            farming_start,
-            farming_end,
+            farming_start_round: round_from(farming_start),
+            farming_end_round: round_from(farming_end),
         }
     }
 
@@ -81,18 +83,18 @@ impl Contract {
             token_contract: self.cheddar_id.clone(),
             emission_rate: self.emission_rate.into(),
             is_open: self.is_active,
-            farming_start: self.farming_start, //unix timestamp
-            farming_end: self.farming_end,     //unix timestamp
+            farming_start: unix_timestamp_from(self.farming_start_round), //convert round to unix timestamp
+            farming_end: unix_timestamp_from(self.farming_end_round), //convert round to unix timestamp
         }
     }
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
-    pub fn status(&self, account_id: AccountId) -> (U128, U128) {
+    pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
         return match self.vaults.get(&account_id) {
-            Some(mut v) => (v.staked.into(), self.ping(&mut v).into()),
+            Some(mut v) => (v.staked.into(), self.ping(&mut v).into(), unix_timestamp_from(current_round())),
             None => {
                 let zero = U128::from(0);
-                return (zero, zero);
+                return (zero, zero, 0);
             }
         };
     }
@@ -106,10 +108,10 @@ impl Contract {
         self.assert_open();
         let amount = env::attached_deposit();
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
+        self.total_stake += amount;
         let aid = env::predecessor_account_id();
         match self.vaults.get(&aid) {
             Some(mut vault) => {
-                self.total_stake += amount;
                 self._stake(amount, &mut vault);
                 self.vaults.insert(&aid, &vault);
                 return vault.staked.into();
@@ -118,7 +120,7 @@ impl Contract {
                 self.vaults.insert(
                     &aid,
                     &Vault {
-                        previous: cmp::max(current_epoch(), self.farming_start),
+                        previous: cmp::max(current_round(), self.farming_start_round), //warning: previous can be set in the future
                         staked: amount,
                         rewards: 0,
                     },
@@ -137,6 +139,10 @@ impl Contract {
         assert_one_yocto();
         let amount = u128::from(amount);
         let (aid, mut vault) = self.get_vault();
+        if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
+            //unstake all => close -- simplify UI
+            return self.close();
+        }
         self._unstake(amount, &mut vault);
 
         self.total_stake -= amount;
@@ -163,13 +169,14 @@ impl Contract {
         self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
-        self.total_stake -= vault.staked;
+        //assert!(self.total_stake >= vault.staked,"total_staked {} < vault.staked {}", self.total_stake, vault.staked);
+        self.total_stake = self.total_stake.saturating_sub(vault.staked);
         let callback = self.withdraw_cheddar(&aid, rewards_str);
         Promise::new(aid).transfer(vault.staked).and(callback);
 
         // TODO: recover the account - it's not deleted!
 
-        return rewards_str;
+        return vault.staked.into();
     }
 
     /// Withdraws all farmed CHEDDAR to the user.
@@ -270,14 +277,14 @@ mod tests {
         let contract = Contract::new(
             accounts(0),
             "cheddar".to_string().try_into().unwrap(),
-            120000,
+            120000.into(),
             10,
             20,
         );
         testing_env!(context
             .predecessor_account_id(accounts(account_id))
             .attached_deposit((deposit_dec * MIN_STAKE / 10).into())
-            .block_timestamp(time * EPOCH)
+            .block_timestamp(time * ROUND)
             .build());
         (context, contract)
     }
@@ -321,7 +328,7 @@ mod tests {
 
         testing_env!(ctx
             .attached_deposit((100 * MIN_STAKE / 10).into())
-            .block_timestamp(2 * EPOCH)
+            .block_timestamp(2 * ROUND)
             .build());
         ctr.stake();
         /*        s = ctr.status(get_acc(1));
@@ -335,22 +342,22 @@ mod tests {
                 assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake increased");
                 assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
         */
-        // Staking at the very beginning wont yeild rewars - a whole epoch needs to pass first
-        testing_env!(ctx.block_timestamp(10 * EPOCH).build());
+        // Staking at the very beginning wont yield rewards - a whole epoch needs to pass first
+        testing_env!(ctx.block_timestamp(10 * ROUND).build());
         s = ctr.status(get_acc(1));
         assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
         assert_eq!(s.1 .0, 0, "no cheddar should be rewarded before start");
 
         // WE are alone - we should get 100% of emission.
 
-        testing_env!(ctx.block_timestamp(11 * EPOCH).build());
+        testing_env!(ctx.block_timestamp(11 * ROUND).build());
         s = ctr.status(get_acc(1));
         assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
         assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");
 
         // second check in same epoch shouldn't change rewards:
 
-        testing_env!(ctx.block_timestamp(11 * EPOCH + 100).build());
+        testing_env!(ctx.block_timestamp(11 * ROUND + 100).build());
         s = ctr.status(get_acc(1));
         assert_eq!(s.0 .0, 20 * MIN_STAKE, "account(1) stake didn't change");
         assert_eq!(s.1 .0, 120, "no cheddar should be rewarded before start");

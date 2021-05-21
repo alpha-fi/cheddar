@@ -35,19 +35,19 @@ impl Contract {
             v.previous != 0,
             "Wrong state. Previously registered epoch can't be zero"
         );
-        let now = current_epoch();
+        let now = current_round();
         print!(
-            "IN PING, epoch={}, farming_start={}\n",
-            now, self.farming_start
+            "IN PING, epoch={}, farming_start_round={}\n",
+            now, self.farming_start_round
         );
         // if farming doesn't started, ignore the rewards update
-        if now < self.farming_start {
+        if now < self.farming_start_round {
             return 0;
         }
-        if now >= self.farming_end {
+        if now >= self.farming_end_round {
             return v.rewards;
         }
-        let now = current_epoch();
+        let now = current_round();
         let delta = now - v.previous;
         print!(
             "PING: after previous_epoch={}, delta={}\n",

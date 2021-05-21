@@ -12,18 +12,17 @@ export NODE_ENV=$NETWORK
 E6="000000"
 E12=$E6$E6
 YOCTO=$E12$E12
-echo $YOCTO
 NANO="000000000"
 
 ## delete acc
-# echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
-# read input
-# near delete $CONTRACT_ACC $MASTER_ACC
-# near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
-# near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"emission_rate\":\"120$YOCTO\", \"farming_start\":1622419200, \"farming_end\":1622343600}" --accountId $MASTER_ACC
+echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
+read input
+near delete $CONTRACT_ACC $MASTER_ACC
+near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
+near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"emission_rate\":\"120$YOCTO\", \"farming_start\":1621566000, \"farming_end\":1622343600}" --accountId $MASTER_ACC
 
 ##redeploy only
-near deploy $CONTRACT_ACC $WASM  --accountId $MASTER_ACC
+#near deploy $CONTRACT_ACC $WASM  --accountId $MASTER_ACC
 #near call $CONTRACT_ACC set_rewards_per_year {\"new_value\":12500} --accountId $MASTER_ACC
 #near call token.$MASTER_ACC mint "{\"account_id\":\"$CONTRACT_ACC\",\"amount\":\"100$E6$YOCTO\"}" --amount 0.000000000000000000000001 --accountId $MASTER_ACC
 #near call $CONTRACT_ACC open {\"value\":true} --accountId $MASTER_ACC

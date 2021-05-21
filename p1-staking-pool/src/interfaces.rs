@@ -16,8 +16,8 @@ pub trait StakingPool {
     /* View methods */
     /****************/
 
-    /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
-    fn status(&self, account_id: AccountId) -> (U128, U128);
+    /// Returns amount of staked NEAR and farmed CHEDDAR of given account & the unix-timestamp for the calculation.
+    fn status(&self, account_id: AccountId) -> (U128, U128, u64);
 }
 
 #[ext_contract(ext_self)]

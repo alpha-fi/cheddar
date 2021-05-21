@@ -2,7 +2,7 @@
 use near_sdk::env;
 use uint::construct_uint;
 
-use crate::constants::ROUND;
+use crate::constants::*;
 
 // pub type U128String = U128;
 // pub type U64String = U64;
@@ -12,8 +12,16 @@ construct_uint! {
     pub struct U256(4);
 }
 
-pub fn current_epoch() -> u64 {
-    env::block_timestamp() / EPOCH
+pub fn current_round() -> u64 {
+    env::block_timestamp() / ROUND
+}
+
+pub fn round_from(unix_timestamp:u64) -> u64 {
+    (unix_timestamp as u128 * NANOSECONDS as u128 / ROUND as u128) as u64
+}
+
+pub fn unix_timestamp_from(round:u64) -> u64 {
+    (round as u128 * ROUND as u128 / NANOSECONDS as u128) as u64
 }
 
 // returns amount * numerator/denominator
