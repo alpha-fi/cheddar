@@ -38,13 +38,13 @@ impl Contract {
         let now = current_round();
         print!(
             "IN PING, epoch={}, farming_start_round={}\n",
-            now, self.farming_start_round
+            now, self.farming_start
         );
         // if farming doesn't started, ignore the rewards update
-        if now < self.farming_start_round {
+        if now < self.farming_start {
             return 0;
         }
-        if now >= self.farming_end_round {
+        if now >= self.farming_end {
             return v.rewards;
         }
         let now = current_round();

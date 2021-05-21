@@ -11,12 +11,10 @@ pub const ONE_YOCTO: Balance = 1;
 
 /// one second in nanoseconds
 pub const NANOSECONDS: u64 = 1_000_000_000;
-/// how many nanoseconds in a round
-pub const ROUND: u64 = NANOSECONDS; // 100 milliseconds
+/// round duration in nanoseconds
+pub const ROUND: u64 = NANOSECONDS; // 1 sec
 pub const ROUNDS_PER_MINUTE: u64 = 60; // 1 minute of rounds
 
 // 1/10_000 of a NEAR
 const MILLI_NEAR: Balance = 1000_000000_000000_000000;
-pub const MIN_STAKE: Balance = MILLI_NEAR * 10;
-
-pub const SECONDS_PER_YEAR: u32 = 3600 * 24 * 365;
+pub const MIN_STAKE: Balance = MILLI_NEAR * 10; // 0.01 NEAR
