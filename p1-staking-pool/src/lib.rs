@@ -48,7 +48,7 @@ impl Contract {
     pub fn new(
         owner_id: ValidAccountId,
         cheddar_id: ValidAccountId,
-        emission_rate: u128,
+        emission_rate: U128,
         farming_start: u64,
         farming_end: u64,
     ) -> Self {
@@ -57,7 +57,7 @@ impl Contract {
             cheddar_id: cheddar_id.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            emission_rate,
+            emission_rate: emission_rate.into(),
             total_stake: 0,
             farming_start,
             farming_end,
@@ -81,6 +81,8 @@ impl Contract {
             token_contract: self.cheddar_id.clone(),
             emission_rate: self.emission_rate.into(),
             is_open: self.is_active,
+            farming_start: self.farming_start, //unix timestamp
+            farming_end: self.farming_end,     //unix timestamp
         }
     }
 
@@ -161,7 +163,7 @@ impl Contract {
         self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
-        self.total_stake -= vault.rewards;
+        self.total_stake -= vault.staked;
         let callback = self.withdraw_cheddar(&aid, rewards_str);
         Promise::new(aid).transfer(vault.staked).and(callback);
 

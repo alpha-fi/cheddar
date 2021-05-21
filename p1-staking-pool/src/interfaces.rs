@@ -34,6 +34,8 @@ pub trait FungibleToken {
 pub struct ContractParams {
     pub owner_id: AccountId,
     pub token_contract: AccountId,
-    pub is_open: bool,
     pub emission_rate: U128,
+    pub is_open: bool,
+    pub farming_start: u64,
+    pub farming_end: u64,
 }

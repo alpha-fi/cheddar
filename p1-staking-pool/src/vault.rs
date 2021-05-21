@@ -47,6 +47,7 @@ impl Contract {
         if now >= self.farming_end {
             return v.rewards;
         }
+        let now = current_epoch();
         let delta = now - v.previous;
         print!(
             "PING: after previous_epoch={}, delta={}\n",

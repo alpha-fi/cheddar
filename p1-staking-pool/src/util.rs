@@ -2,7 +2,7 @@
 use near_sdk::env;
 use uint::construct_uint;
 
-use crate::constants::EPOCH;
+use crate::constants::ROUND;
 
 // pub type U128String = U128;
 // pub type U64String = U64;

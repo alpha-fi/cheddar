@@ -1,6 +1,6 @@
 pub const ERR01_MIN_STAKE: &str = "E01: min stake amount is 0.01 NEAR";
 pub const ERR02_MIN_BALANCE: &str =
-    "E02: can't ustake everything without closing the account. Call close() instead";
+    "E02: can not unstake everything without closing the account. Call close() instead";
 
 // Token registration
 
