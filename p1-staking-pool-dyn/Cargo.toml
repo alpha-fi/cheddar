@@ -1,5 +1,5 @@
 [package]
-name = "p1-staking-pool"
+name = "p1-staking-pool-dyn"
 version = "0.1.0"
 authors = []
 edition = "2018"
