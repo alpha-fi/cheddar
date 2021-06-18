@@ -62,7 +62,7 @@ impl Contract {
             cheddar_id: cheddar_id.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            rate: reward_rate.0,
+            rate: reward_rate.0, //cheddar per round per near (round = 1 second)
             total_stake: 0,
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
