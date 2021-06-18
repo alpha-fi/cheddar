@@ -79,6 +79,13 @@ impl Contract {
         self.is_active = is_open;
     }
 
+    /// changes farming start-end. For admin use only
+    pub fn set_start_end(&mut self, farming_start: u64,farming_end: u64) {
+        self.assert_owner_calling();
+        self.farming_start = round_from_unix(farming_start);
+        self.farming_end = round_from_unix(farming_end);
+    }
+
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
         ContractParams {
