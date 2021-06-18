@@ -4,7 +4,7 @@ OWNER=cheddar.$NETWORK
 MASTER_ACC=$OWNER
 CONTRACT_ACC=p1.$MASTER_ACC
 
-WASM=./res/p1_staking_pool.wasm
+WASM=./res/p1_staking_pool_dyn.wasm
 ls -l $WASM
 
 export NODE_ENV=$NETWORK
@@ -13,16 +13,16 @@ E6="000000"
 E12=$E6$E6
 YOCTO=$E12$E12
 
-CHEDDAR_PER_MINUTE=120
-FARMING_START=1621636200
-FARMING_END=1623450600
+YOCTO_CHEDDAR_PER_SECOND_PER_NEAR=578703703703703700
+FARMING_START=1621886400
+FARMING_END=1623700800
 
 ## delete acc
-echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
-read input
-near delete $CONTRACT_ACC $MASTER_ACC
-near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
-near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"emission_rate\":\"$CHEDDAR_PER_MINUTE$YOCTO\", \"farming_start\":$FARMING_START, \"farming_end\":$FARMING_END}" --accountId $MASTER_ACC
+#  echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
+#  read input
+#  near delete $CONTRACT_ACC $MASTER_ACC
+#  near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
+ near deploy $CONTRACT_ACC $WASM new "{\"owner_id\":\"$OWNER\", \"cheddar_id\":\"token.$MASTER_ACC\",\"reward_rate\":\"$YOCTO_CHEDDAR_PER_SECOND_PER_NEAR\", \"farming_start\":$FARMING_START, \"farming_end\":$FARMING_END}" --accountId $MASTER_ACC
 
 ##redeploy only
 #near deploy $CONTRACT_ACC $WASM  --accountId $MASTER_ACC

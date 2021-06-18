@@ -35,7 +35,7 @@ pub struct Contract {
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`ROUND`)
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
-    pub rate: u128,
+    pub rate: u128, //cheddar per round per near (round = 1 second)
     pub total_stake: u128,
     /// round number when the farming starts
     pub farming_start: Round,
@@ -84,7 +84,7 @@ impl Contract {
         ContractParams {
             owner_id: self.owner_id.clone(),
             token_contract: self.cheddar_id.clone(),
-            emission_rate: self.rate.into(),
+            rewards_per_day: (self.rate * 60 * 60 * 24).into(),
             is_open: self.is_active,
             farming_start: round_to_unix(self.farming_start),
             farming_end: round_to_unix(self.farming_end),
