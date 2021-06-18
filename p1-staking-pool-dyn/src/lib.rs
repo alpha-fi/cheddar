@@ -37,6 +37,8 @@ pub struct Contract {
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
     pub rate: u128, //cheddar per round per near (round = 1 second)
     pub total_stake: u128,
+    /// total number of farmed and withdrawn rewards
+    pub total_rewards: u128,
     /// round number when the farming starts
     pub farming_start: Round,
     /// round number when the farming ends (first round round with no farming)
@@ -64,6 +66,7 @@ impl Contract {
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
             total_stake: 0,
+            total_rewards: 0,
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
         }
@@ -77,13 +80,6 @@ impl Contract {
     pub fn set_active(&mut self, is_open: bool) {
         self.assert_owner_calling();
         self.is_active = is_open;
-    }
-
-    /// changes farming start-end. For admin use only
-    pub fn set_start_end(&mut self, farming_start: u64,farming_end: u64) {
-        self.assert_owner_calling();
-        self.farming_start = round_from_unix(farming_start);
-        self.farming_end = round_from_unix(farming_end);
     }
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
@@ -181,7 +177,6 @@ impl Contract {
             &aid,
             vault.rewards
         );
-        self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
         assert!(
@@ -191,15 +186,17 @@ impl Contract {
             vault.staked
         );
         self.total_stake -= vault.staked;
-        let callback = self.withdraw_cheddar(&aid, rewards_str);
-        Promise::new(aid).transfer(vault.staked).and(callback);
+        self.total_rewards += vault.rewards;
+        let callback = self.withdraw_cheddar(&aid, rewards_str, true);
 
-        // TODO: recover the account - it's not deleted!
+        // TODO: we should check the callback promise result before returning NEAR to user.
+        callback.and(Promise::new(aid).transfer(vault.staked));
 
         return vault.staked.into();
     }
 
-    /// Withdraws all farmed CHEDDAR to the user.
+    /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account. Call
+    /// `close` to remove the account and return all NEAR deposit.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
     #[payable]
@@ -209,18 +206,29 @@ impl Contract {
         let rewards = vault.rewards;
         vault.rewards = 0;
         self.vaults.insert(&aid, &vault);
-        self.withdraw_cheddar(&aid, rewards.into());
+        self.total_rewards += rewards;
+        self.withdraw_cheddar(&aid, rewards.into(), false);
         return rewards.into();
+    }
+
+    // ******************* //
+    // management          //
+
+    /// changes farming start-end. For admin use only
+    pub fn set_start_end(&mut self, farming_start: u64, farming_end: u64) {
+        self.assert_owner_calling();
+        self.farming_start = round_from_unix(farming_start);
+        self.farming_end = round_from_unix(farming_end);
     }
 
     /*****************
      * internal methods */
 
-    fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128) -> Promise {
-        ext_ft::ft_transfer(
+    /// NOTE: the destination account must be registered on CHEDDAR first!
+    fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128, close: bool) -> Promise {
+        ext_ft::mint(
             a.clone().try_into().unwrap(),
             amount,
-            None,
             &self.cheddar_id,
             ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
@@ -228,6 +236,7 @@ impl Contract {
         .then(ext_self::withdraw_callback(
             a.clone(),
             amount,
+            close,
             &env::current_account_id(),
             NO_DEPOSIT,
             GAS_FOR_FT_TRANSFER,
@@ -235,7 +244,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128) {
+    pub fn withdraw_callback(&mut self, user: AccountId, amount: U128, close: bool) {
         assert_eq!(
             env::promise_results_count(),
             1,
@@ -246,9 +255,13 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
             PromiseResult::Successful(_) => {}
             PromiseResult::Failed => {
-                let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
+                if close {
+                    self.vaults.remove(&user);
+                    return;
+                }
+                let mut v = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
                 v.rewards += amount.0;
-                self.vaults.insert(&sender_id, &v);
+                self.vaults.insert(&user, &v);
                 env_log!("cheddar transfer failed")
             }
         };

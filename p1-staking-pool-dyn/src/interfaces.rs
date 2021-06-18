@@ -22,12 +22,13 @@ pub trait StakingPool {
 
 #[ext_contract(ext_self)]
 pub trait ExtStakingPool {
-    fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128);
+    fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128, close: bool);
 }
 
 #[ext_contract(ext_ft)]
 pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+    fn mint(&mut self, account_id: AccountId, amount: U128);
 }
 
 #[derive(Deserialize, Serialize)]
