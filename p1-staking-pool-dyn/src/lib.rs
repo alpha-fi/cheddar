@@ -186,8 +186,7 @@ impl Contract {
             vault.staked
         );
         self.total_stake -= vault.staked;
-        self.total_rewards += vault.rewards;
-        let callback = self.withdraw_cheddar(&aid, rewards_str, true);
+        let callback = self.mint_cheddar(&aid, rewards_str, true);
 
         // TODO: we should check the callback promise result before returning NEAR to user.
         callback.and(Promise::new(aid).transfer(vault.staked));
@@ -206,8 +205,7 @@ impl Contract {
         let rewards = vault.rewards;
         vault.rewards = 0;
         self.vaults.insert(&aid, &vault);
-        self.total_rewards += rewards;
-        self.withdraw_cheddar(&aid, rewards.into(), false);
+        self.mint_cheddar(&aid, rewards.into(), false);
         return rewards.into();
     }
 
@@ -225,7 +223,7 @@ impl Contract {
      * internal methods */
 
     /// NOTE: the destination account must be registered on CHEDDAR first!
-    fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128, close: bool) -> Promise {
+    fn mint_cheddar(&mut self, a: &AccountId, amount: U128, close: bool) -> Promise {
         ext_ft::mint(
             a.clone().try_into().unwrap(),
             amount,
@@ -244,7 +242,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn withdraw_callback(&mut self, user: AccountId, amount: U128, close: bool) {
+    pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
         assert_eq!(
             env::promise_results_count(),
             1,
@@ -253,16 +251,18 @@ impl Contract {
         );
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
-            PromiseResult::Successful(_) => {}
-            PromiseResult::Failed => {
+            PromiseResult::Successful(_) => {
+                self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
                     return;
                 }
+            }
+            PromiseResult::Failed => {
                 let mut v = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
                 v.rewards += amount.0;
                 self.vaults.insert(&user, &v);
-                env_log!("cheddar transfer failed")
+                env::log(b"cheddar transfer failed");
             }
         };
     }
