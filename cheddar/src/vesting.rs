@@ -62,7 +62,7 @@ impl VestingRecord {
             // The total time is positive. Checked at the contract initialization.
             let total_time = self.end_timestamp - self.cliff_timestamp;
             // locked amount is linearly reduced until time_left = 0 (end_timestamp)
-            proportional(self.amount, time_left as u128, total_time as u128)
+            fraction_of(self.amount, time_left as u128, total_time as u128)
         };
     }
 }
