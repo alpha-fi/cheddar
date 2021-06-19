@@ -38,7 +38,7 @@ pub struct Contract {
     pub rate: u128, //cheddar per round per near (round = 1 second)
     pub total_stake: u128,
     /// total number of farmed and withdrawn rewards
-    pub total_rewards: u128,
+    //pub total_rewards: u128,
     /// round number when the farming starts
     pub farming_start: Round,
     /// round number when the farming ends (first round round with no farming)
@@ -66,7 +66,7 @@ impl Contract {
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
             total_stake: 0,
-            total_rewards: 0,
+            //total_rewards: 0,
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
         }
@@ -252,7 +252,7 @@ impl Contract {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
             PromiseResult::Successful(_) => {
-                self.total_rewards += amount.0;
+                //self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
                     return;
