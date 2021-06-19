@@ -37,12 +37,12 @@ pub struct Contract {
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
     pub rate: u128, //cheddar per round per near (round = 1 second)
     pub total_stake: u128,
-    /// total number of farmed and withdrawn rewards
-    //pub total_rewards: u128,
     /// round number when the farming starts
     pub farming_start: Round,
     /// round number when the farming ends (first round round with no farming)
     pub farming_end: Round,
+    /// total number of farmed and withdrawn rewards
+    pub total_rewards: u128,
 }
 
 #[near_bindgen]
@@ -66,7 +66,7 @@ impl Contract {
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
             total_stake: 0,
-            //total_rewards: 0,
+            total_rewards: 0,
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
         }
@@ -91,6 +91,7 @@ impl Contract {
             is_open: self.is_active,
             farming_start: round_to_unix(self.farming_start),
             farming_end: round_to_unix(self.farming_end),
+            total_rewards: self.total_rewards.into(),
         }
     }
 
@@ -150,6 +151,10 @@ impl Contract {
         assert_one_yocto();
         let amount = u128::from(amount);
         let (aid, mut vault) = self.get_vault();
+        assert!(
+            amount <= vault.staked + MIN_STAKE,
+            "Invalid amount, you haven't that much staked"
+        );
         if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
             //unstake all => close -- simplify UI
             return self.close();
@@ -179,23 +184,30 @@ impl Contract {
         );
 
         let rewards_str: U128 = vault.rewards.into();
+
+        let to_transfer = vault.staked;
         assert!(
-            self.total_stake >= vault.staked,
-            "total_staked {} < vault.staked {}",
+            self.total_stake >= to_transfer,
+            "total_staked {} < to_transfer {}",
             self.total_stake,
-            vault.staked
+            to_transfer
         );
-        self.total_stake -= vault.staked;
+        // since .transfer almost never fails, we better discount the unstaked here
+        // and update the vault to avoid allowing double-unstake if any other promise fails.
+        vault.staked = 0;
+        vault.rewards = 0;
+        self.vaults.insert(&aid.clone(), &vault);
+        self.total_stake -= to_transfer;
+
+        // mint cheddar rewards for the user AND transfer back all their NEAR
         let callback = self.mint_cheddar(&aid, rewards_str, true);
+        callback.and(Promise::new(aid).transfer(to_transfer));
 
-        // TODO: we should check the callback promise result before returning NEAR to user.
-        callback.and(Promise::new(aid).transfer(vault.staked));
-
-        return vault.staked.into();
+        return to_transfer.into();
     }
 
-    /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account. Call
-    /// `close` to remove the account and return all NEAR deposit.
+    /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
+    /// Call `close` to remove the account and return all NEAR deposit.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
     #[payable]
@@ -222,8 +234,10 @@ impl Contract {
     /*****************
      * internal methods */
 
+    /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
     fn mint_cheddar(&mut self, a: &AccountId, amount: U128, close: bool) -> Promise {
+        // launch async callback to mint rewards for the user
         ext_ft::mint(
             a.clone().try_into().unwrap(),
             amount,
@@ -231,7 +245,7 @@ impl Contract {
             ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
         )
-        .then(ext_self::withdraw_callback(
+        .then(ext_self::mint_callback(
             a.clone(),
             amount,
             close,
@@ -243,6 +257,7 @@ impl Contract {
 
     #[private]
     pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
+        // after the async call to mint rewards for the user
         assert_eq!(
             env::promise_results_count(),
             1,
@@ -252,9 +267,10 @@ impl Contract {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
             PromiseResult::Successful(_) => {
-                //self.total_rewards += amount.0;
+                self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
+                    env::log(b"account closed");
                     return;
                 }
             }

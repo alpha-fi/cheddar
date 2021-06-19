@@ -22,7 +22,7 @@ pub trait StakingPool {
 
 #[ext_contract(ext_self)]
 pub trait ExtStakingPool {
-    fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128, close: bool);
+    fn mint_callback(&mut self, sender_id: AccountId, amount: U128, close: bool);
 }
 
 #[ext_contract(ext_ft)]
@@ -39,4 +39,5 @@ pub struct ContractParams {
     pub is_open: bool,
     pub farming_start: u64,
     pub farming_end: u64,
+    pub total_rewards: U128,
 }
