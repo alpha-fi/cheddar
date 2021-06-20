@@ -153,7 +153,7 @@ impl Contract {
         let (aid, mut vault) = self.get_vault();
         assert!(
             amount <= vault.staked + MIN_STAKE,
-            "Invalid amount, you haven't that much staked"
+            "Invalid amount, you have not that much staked"
         );
         if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
             //unstake all => close -- simplify UI

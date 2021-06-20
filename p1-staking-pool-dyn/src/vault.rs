@@ -40,8 +40,17 @@ impl Contract {
         if now < self.farming_start {
             return 0;
         }
+        // compute rewards until the end of the farming
         if now >= self.farming_end {
             now = self.farming_end;
+        }
+        // if we restarted the farming period, only consider the new period
+        if v.previous < self.farming_start {
+            v.previous = self.farming_start;
+        }
+        // avoid subtract with overflow
+        if v.previous > now {
+            v.previous = now;
         }
         let delta = now - v.previous;
         if delta > 0 {
