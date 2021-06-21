@@ -22,7 +22,13 @@ pub trait StakingPool {
 
 #[ext_contract(ext_self)]
 pub trait ExtStakingPool {
-    fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool);
+    fn mint_callback(
+        &mut self,
+        user: AccountId,
+        amount_near: U128,
+        amount_cheddar: U128,
+        close: bool,
+    );
 }
 
 #[ext_contract(ext_ft)]
