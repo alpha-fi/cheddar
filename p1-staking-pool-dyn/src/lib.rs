@@ -200,13 +200,14 @@ impl Contract {
     /// Call `close` to remove the account and return all NEAR deposit.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
-    #[payable]
     pub fn withdraw_crop(&mut self) -> Promise {
         let (aid, mut vault) = self.get_vault();
         self.ping(&mut vault);
         let rewards = vault.rewards;
+        vault.rewards = 0;
+        self.vaults.insert(&aid, &vault);
         return self.mint_cheddar_and_maybe_close_account(&aid, 0, rewards, false);
-        //note: vault.rewards will be set to zero if the cheddar transfer to the user is successful
+        //note: vault.rewards will be rolled back if the cheddar minting will fail.
     }
 
     // ******************* //
@@ -222,7 +223,7 @@ impl Contract {
     /*****************
      * internal methods */
 
-    /// mint cheddar rewards for the user, maybe closes the account
+    /// mint cheddar rewards for the user, and close user account if `close == true`.
     /// NOTE: the destination account must be registered on CHEDDAR first!
     fn mint_cheddar_and_maybe_close_account(
         &mut self,
@@ -290,7 +291,10 @@ impl Contract {
             }
 
             PromiseResult::Failed => {
-                panic!(r#"cheddar transfer failed"#);
+                env::log(b"cheddar minting failed, recovering account state");
+                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
+                vault.rewards = vault.rewards + amount_cheddar.0;
+                self.vaults.insert(&user, &vault);
             }
         };
     }
