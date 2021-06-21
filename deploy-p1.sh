@@ -18,7 +18,7 @@ FARMING_START=1624158000
 FARMING_END=1625886000
 
 ## delete acc
-echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
+# echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
 # read input
 # near delete $CONTRACT_ACC $MASTER_ACC
 # near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC
