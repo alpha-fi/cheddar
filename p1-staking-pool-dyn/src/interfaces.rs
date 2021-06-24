@@ -21,9 +21,9 @@ pub trait StakingPool {
 }
 
 #[ext_contract(ext_self)]
-pub trait ExtStakingPool {
+pub trait ExtSelf {
     fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool);
-    fn mint_failed_callback(&mut self);
+    fn mint_callback_finally(&mut self, user: AccountId);
 }
 
 #[ext_contract(ext_ft)]

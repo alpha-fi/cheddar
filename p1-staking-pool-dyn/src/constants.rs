@@ -4,7 +4,10 @@ use near_sdk::{Balance, Gas};
 // pub const GAS_FOR_FT_TRANSFER_CALL: Gas = 25_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER;
 
 /// Amount of gas for fungible token transfers.
-pub const GAS_FOR_FT_TRANSFER: Gas = 10_000_000_000_000;
+pub const TGAS: Gas = 1_000_000_000_000;
+pub const GAS_FOR_FT_TRANSFER: Gas = 10 * TGAS;
+pub const GAS_FOR_MINT_CALLBACK: Gas = 20 * TGAS;
+pub const GAS_FOR_MINT_CALLBACK_FINALLY: Gas = 8 * TGAS;
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const ONE_YOCTO: Balance = 1;
