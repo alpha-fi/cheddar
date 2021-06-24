@@ -289,7 +289,7 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                env_log!("cheddar rewards withdrew {}",amount.0);
+                env_log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
