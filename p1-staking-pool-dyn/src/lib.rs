@@ -7,7 +7,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult, PromiseOrValue
 };
 
 pub mod constants;
@@ -50,7 +50,7 @@ impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
     /// * farming_start & farming_end are unix timestamps
-    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNAER)
+    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -194,14 +194,18 @@ impl Contract {
 
         // since .transfer almost never fails, we better discount the unstaked here
         // and update the vault to avoid allowing double-unstake if any other promise fails.
+        // also zero the rewards to block double-withdraw-cheddar
         vault.staked = 0;
+        vault.rewards = 0;
         self.vaults.insert(&aid.clone(), &vault);
         self.total_stake -= to_transfer;
 
-        // transfer back all their NEAR, then mint cheddar rewards for the user & close the account
-        return Promise::new(aid.clone())
+        // transfer back all user's NEAR
+        // we assume NEAR transfer can't fail
+        // then mint cheddar rewards for the user & close the account
+        Promise::new(aid.clone())
             .transfer(to_transfer)
-            .then(self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true));
+            .then(self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true))
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -252,13 +256,21 @@ impl Contract {
             close,
             &env::current_account_id(),
             NO_DEPOSIT,
-            GAS_FOR_FT_TRANSFER,
+            2 * GAS_FOR_FT_TRANSFER,
         ))
     }
 
     #[private]
-    pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
+    pub fn mint_callback(
+        &mut self,
+        user: AccountId,
+        amount: U128,
+        close: bool,
+    ) -> PromiseOrValue<U128> {
         // after the async call to mint rewards for the user
+        
+        env_log!("env::promise_results_count()={}",env::promise_results_count());
+
         assert_eq!(
             env::promise_results_count(),
             1,
@@ -269,21 +281,34 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
-                vault.rewards = vault.rewards.saturating_sub(amount.0);
-                self.vaults.insert(&user, &vault);
                 self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
                     env::log(b"account closed");
-                    return;
                 }
+                return PromiseOrValue::Value(amount);
             }
 
             PromiseResult::Failed => {
-                panic!("{}", "cheddar transfer failed");
+                // mint failed, restore cheddar rewards
+                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
+                vault.rewards = amount.0;
+                self.vaults.insert(&user, &vault);
+                // causing the panic! in a promise lets us restore vault.rewards
+                PromiseOrValue::Promise(ext_self::mint_failed_callback(
+                        &env::current_account_id(),
+                        NO_DEPOSIT,
+                        GAS_FOR_FT_TRANSFER,
+                    )
+                )
             }
-        };
+        }
+    }
+
+    #[private]
+    pub fn mint_failed_callback(&mut self) {
+        // just to inform the user that the mint/withdraw failed
+        panic!("{}", "cheddar transfer failed");
     }
 
     fn assert_owner_calling(&self) {
