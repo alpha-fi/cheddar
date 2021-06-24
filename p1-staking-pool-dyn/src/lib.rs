@@ -50,7 +50,7 @@ impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
     /// * farming_start & farming_end are unix timestamps
-    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNAER)
+    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -192,16 +192,24 @@ impl Contract {
             to_transfer
         );
 
-        // since .transfer almost never fails, we better discount the unstaked here
-        // and update the vault to avoid allowing double-unstake if any other promise fails.
+        // since NEAR .transfer never fails, we better discount the unstaked here,
+        // update the vault to avoid allowing double-unstake if any other promise fails,
+        // also zero the rewards to block double-withdraw-cheddar
         vault.staked = 0;
+        vault.rewards = 0;
         self.vaults.insert(&aid.clone(), &vault);
         self.total_stake -= to_transfer;
 
-        // transfer back all their NEAR, then mint cheddar rewards for the user & close the account
-        return Promise::new(aid.clone())
-            .transfer(to_transfer)
-            .then(self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true));
+        // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
+        Promise::new(aid.clone()).transfer(to_transfer);
+        // note: returning an "and/joint" promises is forbidden now
+        // and joining the 2 promises with "then" causes the "transfer"
+        // to become the main promise for the callback,
+        // so the success/failure of the mint-call can not be evaluated.
+        // Creating 2 promises (batch) works correctly
+
+        // 2nd promise is to mint cheddar rewards for the user & close the account
+        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -213,8 +221,10 @@ impl Contract {
         let (aid, mut vault) = self.get_vault();
         self.ping(&mut vault);
         let rewards = vault.rewards;
+        // zero the rewards to block double-withdraw-cheddar
+        vault.rewards = 0;
+        self.vaults.insert(&aid.clone(), &vault);
         return self.mint_cheddar_promise_maybe_close_account(&aid, rewards.into(), false);
-        //note: vault.rewards will be set to zero if the cheddar transfer to the user is successful
     }
 
     // ******************* //
@@ -252,12 +262,22 @@ impl Contract {
             close,
             &env::current_account_id(),
             NO_DEPOSIT,
-            GAS_FOR_FT_TRANSFER,
+            GAS_FOR_MINT_CALLBACK,
+        ))
+        .then(ext_self::mint_callback_finally(
+            a.clone(),
+            &env::current_account_id(),
+            NO_DEPOSIT,
+            GAS_FOR_MINT_CALLBACK_FINALLY,
         ))
     }
 
     #[private]
     pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
+        env_log!(
+            "mint_callback, env::promise_results_count()={}",
+            env::promise_results_count()
+        );
         // after the async call to mint rewards for the user
         assert_eq!(
             env::promise_results_count(),
@@ -269,21 +289,32 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
-                vault.rewards = vault.rewards.saturating_sub(amount.0);
-                self.vaults.insert(&user, &vault);
+                env_log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
                 if close {
                     self.vaults.remove(&user);
                     env::log(b"account closed");
-                    return;
                 }
             }
 
             PromiseResult::Failed => {
+                // mint failed, restore cheddar rewards
+                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
+                vault.rewards = amount.0;
+                self.vaults.insert(&user, &vault);
+            }
+        }
+    }
+
+    #[private]
+    pub fn mint_callback_finally(&mut self, user: &AccountId) {
+        //Check if rewards were withdrew
+        if let Some(vault) = self.vaults.get(&user) {
+            if vault.rewards != 0 {
+                //if there are cheddar rewards, means the cheddar transfer failed
                 panic!("{}", "cheddar transfer failed");
             }
-        };
+        }
     }
 
     fn assert_owner_calling(&self) {
