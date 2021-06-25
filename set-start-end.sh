@@ -1,0 +1,12 @@
+set -e
+NETWORK=testnet
+OWNER=cheddar.$NETWORK
+MASTER_ACC=$OWNER
+CONTRACT_ACC=p1.$MASTER_ACC
+
+export NODE_ENV=$NETWORK
+
+FARMING_START=1624146300
+FARMING_END=1625886000
+
+near call $CONTRACT_ACC set_start_end "{\"farming_start\":$FARMING_START, \"farming_end\":$FARMING_END}" --accountId $MASTER_ACC

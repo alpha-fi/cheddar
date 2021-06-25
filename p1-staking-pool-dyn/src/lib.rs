@@ -35,12 +35,14 @@ pub struct Contract {
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed each per each epoch. Epoch is defined in constants (`ROUND`)
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
-    pub rate: u128,
+    pub rate: u128, //cheddar per round per near (round = 1 second)
     pub total_stake: u128,
     /// round number when the farming starts
     pub farming_start: Round,
     /// round number when the farming ends (first round round with no farming)
     pub farming_end: Round,
+    /// total number of farmed and withdrawn rewards
+    pub total_rewards: u128,
 }
 
 #[near_bindgen]
@@ -48,7 +50,7 @@ impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
     /// * farming_start & farming_end are unix timestamps
-    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNAER)
+    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -62,8 +64,9 @@ impl Contract {
             cheddar_id: cheddar_id.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            rate: reward_rate.0,
+            rate: reward_rate.0, //cheddar per round per near (round = 1 second)
             total_stake: 0,
+            total_rewards: 0,
             farming_start: round_from_unix(farming_start),
             farming_end: round_from_unix(farming_end),
         }
@@ -84,10 +87,11 @@ impl Contract {
         ContractParams {
             owner_id: self.owner_id.clone(),
             token_contract: self.cheddar_id.clone(),
-            emission_rate: self.rate.into(),
+            rewards_per_day: (self.rate * 60 * 60 * 24).into(),
             is_open: self.is_active,
             farming_start: round_to_unix(self.farming_start),
             farming_end: round_to_unix(self.farming_end),
+            total_rewards: self.total_rewards.into(),
         }
     }
 
@@ -143,10 +147,14 @@ impl Contract {
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
-    pub fn unstake(&mut self, amount: U128) -> U128 {
+    pub fn unstake(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
         let amount = u128::from(amount);
         let (aid, mut vault) = self.get_vault();
+        assert!(
+            amount <= vault.staked + MIN_STAKE,
+            "Invalid amount, you have not that much staked"
+        );
         if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
             //unstake all => close -- simplify UI
             return self.close();
@@ -155,8 +163,7 @@ impl Contract {
 
         self.total_stake -= amount;
         self.vaults.insert(&aid, &vault);
-        Promise::new(aid).transfer(amount);
-        vault.staked.into()
+        return Promise::new(aid).transfer(amount);
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -165,7 +172,7 @@ impl Contract {
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
-    pub fn close(&mut self) -> U128 {
+    pub fn close(&mut self) -> Promise {
         assert_one_yocto();
         let (aid, mut vault) = self.get_vault();
         self.ping(&mut vault);
@@ -174,69 +181,106 @@ impl Contract {
             &aid,
             vault.rewards
         );
-        self.vaults.remove(&aid);
 
         let rewards_str: U128 = vault.rewards.into();
+
+        let to_transfer = vault.staked;
         assert!(
-            self.total_stake >= vault.staked,
-            "total_staked {} < vault.staked {}",
+            self.total_stake >= to_transfer,
+            "total_staked {} < to_transfer {}",
             self.total_stake,
-            vault.staked
+            to_transfer
         );
-        self.total_stake -= vault.staked;
-        let callback = self.withdraw_cheddar(&aid, rewards_str);
-        // AUDIT: `promise_and` is no-op by itself unless it's followed up by `.then`
-        //    Here the callback is just a promise (even though internally it's a.then(b))
-        //    So `.and` doesn't do anything.
-        //    If the intent is to only return tokens after the successful cheddar transfer,
-        //    then the callback should handle the NEAR transfer.
-        //    If we just need to make sure both promises fly, then `and` is not necessary.
-        Promise::new(aid).transfer(vault.staked).and(callback);
 
-        // TODO: recover the account - it's not deleted!
+        // since NEAR .transfer never fails, we better discount the unstaked here,
+        // update the vault to avoid allowing double-unstake if any other promise fails,
+        // also zero the rewards to block double-withdraw-cheddar
+        vault.staked = 0;
+        vault.rewards = 0;
+        self.vaults.insert(&aid.clone(), &vault);
+        self.total_stake -= to_transfer;
 
-        return vault.staked.into();
+        // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
+        Promise::new(aid.clone()).transfer(to_transfer);
+        // note: returning an "and/joint" promises is forbidden now
+        // and joining the 2 promises with "then" causes the "transfer"
+        // to become the main promise for the callback,
+        // so the success/failure of the mint-call can not be evaluated.
+        // Creating 2 promises (batch) works correctly
+
+        // 2nd promise is to mint cheddar rewards for the user & close the account
+        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true);
     }
 
-    /// Withdraws all farmed CHEDDAR to the user.
+    /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
+    /// Call `close` to remove the account and return all NEAR deposit.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
     #[payable]
-    pub fn withdraw_crop(&mut self) -> U128 {
+    pub fn withdraw_crop(&mut self) -> Promise {
         let (aid, mut vault) = self.get_vault();
         self.ping(&mut vault);
         let rewards = vault.rewards;
+        // zero the rewards to block double-withdraw-cheddar
         vault.rewards = 0;
-        // AUDIT: If this is called after `close` with unsuccessful cheddar transfer,
-        //     then it may instead empty `vault`.
-        self.vaults.insert(&aid, &vault);
-        self.withdraw_cheddar(&aid, rewards.into());
-        return rewards.into();
+        self.vaults.insert(&aid.clone(), &vault);
+        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards.into(), false);
+    }
+
+    // ******************* //
+    // management          //
+
+    /// changes farming start-end. For admin use only
+    pub fn set_start_end(&mut self, farming_start: u64, farming_end: u64) {
+        self.assert_owner_calling();
+        self.farming_start = round_from_unix(farming_start);
+        self.farming_end = round_from_unix(farming_end);
     }
 
     /*****************
      * internal methods */
 
-    fn withdraw_cheddar(&mut self, a: &AccountId, amount: U128) -> Promise {
-        ext_ft::ft_transfer(
+    /// mint cheddar rewards for the user, maybe closes the account
+    /// NOTE: the destination account must be registered on CHEDDAR first!
+    fn mint_cheddar_promise_maybe_close_account(
+        &mut self,
+        a: &AccountId,
+        amount: U128,
+        close: bool,
+    ) -> Promise {
+        // AUDIT: TODO: Assert or check that the amount is positive.
+
+        // launch async callback to mint rewards for the user
+        ext_ft::mint(
             a.clone().try_into().unwrap(),
             amount,
-            None,
             &self.cheddar_id,
             ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
         )
-        .then(ext_self::withdraw_callback(
+        .then(ext_self::mint_callback(
             a.clone(),
             amount,
+            close,
             &env::current_account_id(),
             NO_DEPOSIT,
-            GAS_FOR_FT_TRANSFER,
+            GAS_FOR_MINT_CALLBACK,
+        ))
+        .then(ext_self::mint_callback_finally(
+            a.clone(),
+            &env::current_account_id(),
+            NO_DEPOSIT,
+            GAS_FOR_MINT_CALLBACK_FINALLY,
         ))
     }
 
     #[private]
-    pub fn withdraw_callback(&mut self, sender_id: AccountId, amount: U128) {
+    pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
+        env_log!(
+            "mint_callback, env::promise_results_count()={}",
+            env::promise_results_count()
+        );
+        // after the async call to mint rewards for the user
         assert_eq!(
             env::promise_results_count(),
             1,
@@ -245,14 +289,39 @@ impl Contract {
         );
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
-            PromiseResult::Successful(_) => {}
-            PromiseResult::Failed => {
-                let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
-                v.rewards += amount.0;
-                self.vaults.insert(&sender_id, &v);
-                env_log!("cheddar transfer failed")
+
+            PromiseResult::Successful(_) => {
+                env_log!("cheddar rewards withdrew {}", amount.0);
+                self.total_rewards += amount.0;
+                if close {
+                    // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
+                    //    in case of weird async race conditions, the vault might get new staked balance.
+                    self.vaults.remove(&user);
+                    env::log(b"account closed");
+                }
             }
-        };
+
+            PromiseResult::Failed => {
+                // mint failed, restore cheddar rewards
+                // AUDIT: TODO: If the vault was closed before by another TX, then the contract
+                //     should recover the vault here.
+                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
+                // AUDIT: TODO: You may also want to ping the vault.
+                vault.rewards = amount.0;
+                self.vaults.insert(&user, &vault);
+            }
+        }
+    }
+
+    #[private]
+    pub fn mint_callback_finally(&mut self, user: &AccountId) {
+        //Check if rewards were withdrew
+        if let Some(vault) = self.vaults.get(&user) {
+            if vault.rewards != 0 {
+                //if there are cheddar rewards, means the cheddar transfer failed
+                panic!("{}", "cheddar transfer failed");
+            }
+        }
     }
 
     fn assert_owner_calling(&self) {
@@ -382,7 +451,7 @@ mod tests {
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
-        // Staking at the very beginning wont yeild rewars - a whole epoch needs to pass first
+        // Staking at the very beginning wont yield rewards - a whole epoch needs to pass first
 
         testing_env!(ctx.block_timestamp(10 * ROUND).build());
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));

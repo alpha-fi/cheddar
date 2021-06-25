@@ -83,23 +83,24 @@ impl Contract {
         return self.owner_id.clone();
     }
 
-    //minters can mint more
+    /// minters can mint more
     #[payable]
     pub fn mint(&mut self, account_id: &AccountId, amount: U128String) {
         assert_one_yocto();
+        env_log!("Minting {} CHEDDAR to {}", amount.0, account_id);
         self.assert_minter(env::predecessor_account_id());
         self.mint_into(account_id, amount.0);
     }
 
-    //minters can also burn. La main qui donne est au-dessus de la main qui reçoit
+    /// burns `amount` from own supply of coins
+    // AUDIT: Has to be payable
     #[payable]
-    pub fn burn(&mut self, account_id: &AccountId, amount: U128String) {
+    pub fn self_burn(&mut self, amount: U128String) {
         assert_one_yocto();
-        self.assert_minter(env::predecessor_account_id());
-        self.internal_burn(account_id, amount.0);
+        self.internal_burn(&env::predecessor_account_id(), amount.0);
     }
 
-    //owner can add/remove minters
+    /// owner can add/remove minters
     #[payable]
     pub fn add_minter(&mut self, account_id: AccountId) {
         assert_one_yocto();
