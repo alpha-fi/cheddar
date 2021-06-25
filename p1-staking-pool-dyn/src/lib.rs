@@ -185,6 +185,12 @@ impl Contract {
         );
         self.total_stake -= vault.staked;
         let callback = self.withdraw_cheddar(&aid, rewards_str);
+        // AUDIT: `promise_and` is no-op by itself unless it's followed up by `.then`
+        //    Here the callback is just a promise (even though internally it's a.then(b))
+        //    So `.and` doesn't do anything.
+        //    If the intent is to only return tokens after the successful cheddar transfer,
+        //    then the callback should handle the NEAR transfer.
+        //    If we just need to make sure both promises fly, then `and` is not necessary.
         Promise::new(aid).transfer(vault.staked).and(callback);
 
         // TODO: recover the account - it's not deleted!
@@ -201,6 +207,8 @@ impl Contract {
         self.ping(&mut vault);
         let rewards = vault.rewards;
         vault.rewards = 0;
+        // AUDIT: If this is called after `close` with unsuccessful cheddar transfer,
+        //     then it may instead empty `vault`.
         self.vaults.insert(&aid, &vault);
         self.withdraw_cheddar(&aid, rewards.into());
         return rewards.into();

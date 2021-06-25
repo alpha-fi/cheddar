@@ -9,6 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# AUDIT: serde and serde_json don't need to be imported, since you can use `near_sdk::serde` and `near_sdk::serde_json`
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 uint = { version = "0.9.0", default-features = false }

@@ -45,6 +45,8 @@ impl Contract {
         }
         let delta = now - v.previous;
         if delta > 0 {
+            // AUDIT: Why multiple as U256, if there are no division by U256?
+            //     Maybe `big(v.staked / E24)` should be `big(v.staked) / big(E24)`?
             let farmed = (U256::from(delta) * big(self.rate) * big(v.staked / E24)).as_u128();
             v.rewards += farmed;
             println!(
