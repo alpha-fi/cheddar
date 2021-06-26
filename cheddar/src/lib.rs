@@ -89,6 +89,7 @@ impl Contract {
     }
 
     /// burns `amount` from own supply of coins
+    #[payable]
     pub fn self_burn(&mut self, amount: U128String) {
         assert_one_yocto();
         self.internal_burn(&env::predecessor_account_id(), amount.0);
