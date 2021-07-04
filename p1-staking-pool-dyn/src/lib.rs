@@ -248,6 +248,8 @@ impl Contract {
         amount: U128,
         close: bool,
     ) -> Promise {
+        // AUDIT: TODO: Assert or check that the amount is positive.
+
         // launch async callback to mint rewards for the user
         ext_ft::mint(
             a.clone().try_into().unwrap(),
@@ -292,6 +294,8 @@ impl Contract {
                 env_log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
                 if close {
+                    // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
+                    //    in case of weird async race conditions, the vault might get new staked balance.
                     self.vaults.remove(&user);
                     env::log(b"account closed");
                 }
@@ -299,7 +303,10 @@ impl Contract {
 
             PromiseResult::Failed => {
                 // mint failed, restore cheddar rewards
+                // AUDIT: TODO: If the vault was closed before by another TX, then the contract
+                //     should recover the vault here.
                 let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
+                // AUDIT: TODO: You may also want to ping the vault.
                 vault.rewards = amount.0;
                 self.vaults.insert(&user, &vault);
             }

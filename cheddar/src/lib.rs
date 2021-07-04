@@ -1,3 +1,7 @@
+// [AUDIT] NOTE: Storage cost is still an issue. An account with 125 bytes costs 0.00125 `NEAR`.
+// I think the transaction to create it is cheaper than that, so it's possible to lock the contract
+// due to the storage limitation.
+
 /// Cheddar Token
 ///
 /// Functionality:
@@ -149,6 +153,8 @@ impl Contract {
 
     /// Get the amount of tokens that are locked in this account due to lockup or vesting.
     pub fn get_locked_amount(&self) -> U128String {
+        // [AUDIT] NOTE: View methods don't have `predecessor_account_id`.
+        //    Just add an argument for the account ID.
         match self.vested.get(&env::predecessor_account_id()) {
             Some(vesting) => vesting.compute_amount_locked().into(),
             None => 0.into(),
