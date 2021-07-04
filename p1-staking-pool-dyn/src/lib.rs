@@ -97,17 +97,12 @@ impl Contract {
 
     /// Returns amount of staked NEAR, farmed CHEDDAR and the current round.
     pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
-        return match self.vaults.get(&account_id) {
-            Some(mut v) => (
-                v.staked.into(),
-                self.ping(&mut v).into(),
-                round_to_unix(current_round()),
-            ),
-            None => {
-                let zero = U128::from(0);
-                return (zero, zero, 0);
-            }
-        };
+        let mut v = self.get_vault_or_default(&account_id);
+        return (
+            v.staked.into(),
+            self.ping(&mut v).into(),
+            round_to_unix(current_round()),
+        );
     }
 
     // ******************* //
@@ -121,25 +116,18 @@ impl Contract {
         assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
         let aid = env::predecessor_account_id();
         self.total_stake += amount;
-        match self.vaults.get(&aid) {
-            Some(mut vault) => {
-                self._stake(amount, &mut vault);
-                self.vaults.insert(&aid, &vault);
-                return vault.staked.into();
-            }
-            None => {
-                self.vaults.insert(
-                    &aid,
-                    &Vault {
-                        // warning: previous can be set in the future
-                        previous: cmp::max(current_round(), self.farming_start),
-                        staked: amount,
-                        rewards: 0,
-                    },
-                );
-                return amount.into();
-            }
-        };
+        let mut vault = self.get_vault_or_default(&aid);
+        if vault.is_empty() {
+            // new account no need to ping & _stake
+            vault.staked += amount;
+            // warning: previous can be set in the future
+            vault.previous = cmp::max(current_round(), self.farming_start);
+        } else {
+            self._stake(amount, &mut vault);
+        }
+        // save vault
+        self.save_vault(&aid, &vault);
+        return vault.staked.into();
     }
 
     /// Unstakes given amount of $NEAR and transfers it back to the user.
@@ -150,7 +138,8 @@ impl Contract {
     pub fn unstake(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
         let amount = u128::from(amount);
-        let (aid, mut vault) = self.get_vault();
+        let aid = env::predecessor_account_id();
+        let mut vault = self.get_vault_or_default(&aid);
         assert!(
             amount <= vault.staked + MIN_STAKE,
             "Invalid amount, you have not that much staked"
@@ -162,7 +151,7 @@ impl Contract {
         self._unstake(amount, &mut vault);
 
         self.total_stake -= amount;
-        self.vaults.insert(&aid, &vault);
+        self.save_vault(&aid, &vault);
         return Promise::new(aid).transfer(amount);
     }
 
@@ -174,7 +163,8 @@ impl Contract {
     #[payable]
     pub fn close(&mut self) -> Promise {
         assert_one_yocto();
-        let (aid, mut vault) = self.get_vault();
+        let aid = env::predecessor_account_id();
+        let mut vault = self.get_vault_or_default(&aid);
         self.ping(&mut vault);
         env_log!(
             "Closing {} account, farmed CHEDDAR: {}",
@@ -197,10 +187,11 @@ impl Contract {
         // also zero the rewards to block double-withdraw-cheddar
         vault.staked = 0;
         vault.rewards = 0;
-        self.vaults.insert(&aid.clone(), &vault);
+        self.save_vault(&aid, &vault);
         self.total_stake -= to_transfer;
 
         // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
+        assert!(to_transfer > 0);
         Promise::new(aid.clone()).transfer(to_transfer);
         // note: returning an "and/joint" promises is forbidden now
         // and joining the 2 promises with "then" causes the "transfer"
@@ -209,7 +200,7 @@ impl Contract {
         // Creating 2 promises (batch) works correctly
 
         // 2nd promise is to mint cheddar rewards for the user & close the account
-        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str, true);
+        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -218,13 +209,15 @@ impl Contract {
     /// Panics if user has not staked anything.
     #[payable]
     pub fn withdraw_crop(&mut self) -> Promise {
-        let (aid, mut vault) = self.get_vault();
+        let aid = env::predecessor_account_id();
+        let mut vault = self.get_vault_or_default(&aid);
         self.ping(&mut vault);
+        assert!(vault.rewards > 0);
         let rewards = vault.rewards;
         // zero the rewards to block double-withdraw-cheddar
         vault.rewards = 0;
-        self.vaults.insert(&aid.clone(), &vault);
-        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards.into(), false);
+        self.save_vault(&aid, &vault);
+        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards.into());
     }
 
     // ******************* //
@@ -242,14 +235,8 @@ impl Contract {
 
     /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
-    fn mint_cheddar_promise_maybe_close_account(
-        &mut self,
-        a: &AccountId,
-        amount: U128,
-        close: bool,
-    ) -> Promise {
-        // AUDIT: TODO: Assert or check that the amount is positive.
-
+    fn mint_cheddar_promise_maybe_close_account(&mut self, a: &AccountId, amount: U128) -> Promise {
+        assert!(amount.0 > 0, "amount should be positive");
         // launch async callback to mint rewards for the user
         ext_ft::mint(
             a.clone().try_into().unwrap(),
@@ -261,7 +248,6 @@ impl Contract {
         .then(ext_self::mint_callback(
             a.clone(),
             amount,
-            close,
             &env::current_account_id(),
             NO_DEPOSIT,
             GAS_FOR_MINT_CALLBACK,
@@ -275,11 +261,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
-        env_log!(
-            "mint_callback, env::promise_results_count()={}",
-            env::promise_results_count()
-        );
+    pub fn mint_callback(&mut self, user: AccountId, amount: U128) {
         // after the async call to mint rewards for the user
         assert_eq!(
             env::promise_results_count(),
@@ -287,28 +269,22 @@ impl Contract {
             "{}",
             ERR25_WITHDRAW_CALLBACK
         );
+        // check prev promise result
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
                 env_log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
-                if close {
-                    // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
-                    //    in case of weird async race conditions, the vault might get new staked balance.
-                    self.vaults.remove(&user);
-                    env::log(b"account closed");
-                }
             }
 
             PromiseResult::Failed => {
                 // mint failed, restore cheddar rewards
-                // AUDIT: TODO: If the vault was closed before by another TX, then the contract
-                //     should recover the vault here.
-                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
-                // AUDIT: TODO: You may also want to ping the vault.
-                vault.rewards = amount.0;
-                self.vaults.insert(&user, &vault);
+                // recover the vault
+                // AUDIT: TODO?: You may also want to ping the vault.
+                let mut vault = self.get_vault_or_default(&user);
+                vault.rewards += amount.0;
+                self.save_vault(&user, &vault);
             }
         }
     }
@@ -316,11 +292,11 @@ impl Contract {
     #[private]
     pub fn mint_callback_finally(&mut self, user: &AccountId) {
         //Check if rewards were withdrew
-        if let Some(vault) = self.vaults.get(&user) {
-            if vault.rewards != 0 {
-                //if there are cheddar rewards, means the cheddar transfer failed
-                panic!("{}", "cheddar transfer failed");
-            }
+        // check the vault
+        let vault = self.get_vault_or_default(&user);
+        if vault.rewards != 0 {
+            //if there are cheddar rewards, means the cheddar transfer failed
+            panic!("{}", "cheddar transfer failed");
         }
     }
 
