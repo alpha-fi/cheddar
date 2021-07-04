@@ -93,7 +93,6 @@ impl Contract {
     }
 
     /// burns `amount` from own supply of coins
-    // AUDIT: Has to be payable
     #[payable]
     pub fn self_burn(&mut self, amount: U128String) {
         assert_one_yocto();
