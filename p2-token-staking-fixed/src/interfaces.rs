@@ -37,9 +37,10 @@ pub struct ContractParams {
     pub owner_id: AccountId,
     pub farming_token: AccountId,
     pub staked_token: AccountId,
-    pub rewards_per_day: U128,
+    pub farming_rate: U128,
+    pub round_len: u64,
     pub is_open: bool,
     pub farming_start: u64,
     pub farming_end: u64,
-    pub total_rewards: U128,
+    pub staked_in_round: U128,
 }

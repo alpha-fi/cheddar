@@ -17,23 +17,12 @@ use crate::*;
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 #[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
-    // epoch when the last time ping was called
-    pub previous: u64,
+    // round when the last time ping was called
+    pub previous: usize,
     /// amount of $near locked in this vault
     pub staked: Balance,
     /// Amount of accumulated rewards from staking;
     pub rewards: Balance,
-
-    /// Deposited token balances.
-    pub tokens: Balance,
-}
-
-impl Vault {
-    #[inline]
-    pub(crate) fn remove_token(&mut self, token: &AccountId, amount: u128) {
-        assert!(self.tokens >= amount, "{}", ERR22_NOT_ENOUGH_TOKENS);
-        self.tokens -= amount;
-    }
 }
 
 impl Contract {
@@ -47,51 +36,40 @@ impl Contract {
     returns total account rewards
      */
     pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
-        assert!(
-            v.previous != 0,
-            "Wrong state. Previously registered epoch can't be zero"
-        );
-        let mut now = current_round();
+        let r = self.current_round();
         // if farming doesn't started, ignore the rewards update
-        if now < self.farming_start {
+        // note: the round counting stops at self.farming_end
+        if r == 0 {
             return 0;
         }
-        // compute rewards until the end of the farming
-        if now >= self.farming_end {
-            now = self.farming_end;
-        }
-        // if we restarted the farming period, only consider the new period
-        if v.previous < self.farming_start {
-            v.previous = self.farming_start;
-        }
-        // avoid subtract with overflow
-        if v.previous > now {
-            v.previous = now;
-        }
-        let delta = now - v.previous;
-        if delta > 0 {
-            let farmed = u128::from(delta) * self.rate * v.staked / E24;
+        let rate = big(self.rate) * big(v.staked);
+        while v.previous < r {
+            let farmed = (rate / self.rounds[v.previous]).as_u128();
             v.rewards += farmed;
             println!(
-                "FARMING {}, delta={}, emission_rate={}, total={}, user={}",
-                farmed, delta, self.rate, self.total_stake, v.staked
+                "FARMING {},  round_staked={}, user={}",
+                farmed, self.rounds[v.previous], v.staked
             );
-            v.previous = now;
+            v.previous += 1;
         }
         return v.rewards;
     }
 
     pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {
+        let r = self.current_round();
+        // note: r==1 at start
+        self.rounds[r - 1] += amount;
         self.ping(v);
         v.staked += amount;
     }
 
     pub(crate) fn _unstake(&mut self, amount: Balance, v: &mut Vault) {
         assert!(v.staked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
+        let r = self.current_round();
+        // note: r==1 at start
+        self.rounds[r - 1] -= amount;
         self.ping(v);
         v.staked -= amount;
-
-        assert!(v.staked >= MIN_BALANCE, "{}", ERR02_MIN_BALANCE);
     }
 }
 
@@ -117,11 +95,7 @@ impl FungibleTokenReceiver for Contract {
         let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
 
         let amount = amount.0;
-        // TODO: calculate all rounds.
-        self.total_stake += amount;
-
         // TODO: make sure we account it correctly
-        v.tokens += amount;
         self._stake(amount, &mut v);
 
         self.vaults.insert(&sender_id, &v);

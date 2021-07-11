@@ -1,4 +1,4 @@
-use std::{cmp, convert::TryInto};
+use std::convert::TryInto;
 
 // use near_contract_standards::storage_management::{
 //     StorageBalance, StorageBalanceBounds, StorageManagement,
@@ -36,21 +36,21 @@ pub struct Contract {
     /// amount of $CHEDDAR farmed each per each round. Round is defined in constants.rs
     /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
     pub rate: u128, //cheddar per round per near (round = 1 second)
-    pub total_stake: u128,
     /// round number when the farming starts
-    pub farming_start: Round,
+    pub farming_start: u64,
     /// round number when the farming ends (first round round with no farming)
-    pub farming_end: Round,
+    pub farming_end: u64,
     /// total number of farmed and withdrawn rewards
     pub total_rewards: u128,
+    pub rounds: Vec<u128>,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
-    /// * farming_start & farming_end are unix timestamps
-    /// * reward_rate is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
+    /// * `farming_start` & `farming_end` are unix timestamps
+    /// * `reward_rate` is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -60,6 +60,11 @@ impl Contract {
         farming_start: u64,
         farming_end: u64,
     ) -> Self {
+        assert!(
+            farming_end > farming_start,
+            "Start must be after end, end at there must be at least one round difference"
+        );
+        let num_rounds: usize = (farming_end - farming_start).try_into().unwrap();
         Self {
             owner_id: owner_id.into(),
             cheddar_id: cheddar_id.into(),
@@ -67,44 +72,40 @@ impl Contract {
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
-            total_stake: 0,
             total_rewards: 0,
-            farming_start: round_from_unix(farming_start),
-            farming_end: round_from_unix(farming_end),
+            farming_start,
+            farming_end,
+            rounds: vec![0u128; num_rounds],
         }
     }
 
     // ************ //
     // view methods //
 
-    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
-    /// `epoch_end` attributes which controls start and end of the farming.
-    pub fn set_active(&mut self, is_open: bool) {
-        self.assert_owner_calling();
-        self.is_active = is_open;
-    }
-
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
+        let r = self.current_round();
+        let staked = self.rounds.get(r).unwrap_or(&0);
         ContractParams {
             owner_id: self.owner_id.clone(),
             farming_token: self.cheddar_id.clone(),
             staked_token: self.token_id.clone(),
-            rewards_per_day: (self.rate * 60 * 60 * 24).into(),
+            farming_rate: self.rate.into(),
+            round_len: ROUND,
             is_open: self.is_active,
-            farming_start: round_to_unix(self.farming_start),
-            farming_end: round_to_unix(self.farming_end),
-            total_rewards: self.total_rewards.into(),
+            farming_start: self.farming_start,
+            farming_end: self.farming_end,
+            staked_in_round: (*staked).into(),
         }
     }
 
     /// Returns amount of staked NEAR, farmed CHEDDAR and the current round.
-    pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
+    pub fn status(&self, account_id: AccountId) -> (U128, U128, usize) {
         return match self.vaults.get(&account_id) {
             Some(mut v) => (
                 v.staked.into(),
                 self.ping(&mut v).into(),
-                round_to_unix(current_round()),
+                self.current_round(),
             ),
             None => {
                 let zero = U128::from(0);
@@ -116,10 +117,12 @@ impl Contract {
     // ******************* //
     // transaction methods //
 
-    /// Unstakes given amount of $NEAR and transfers it back to the user.
+    /// Unstakes given amount of tokens and transfers it back to the user.
+    /// If amount is >= then the amount staked then we close the account. NOTE: account once
+    /// closed must re-register to stake again.
     /// Returns amount of staked tokens left after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
-    /// Requires 1 yNEAR payment for wallet validation.
+    /// Requires 1 yNEAR payment for wallet 2FA.
     #[payable]
     pub fn unstake(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
@@ -129,14 +132,13 @@ impl Contract {
             amount <= vault.staked + MIN_BALANCE,
             "Invalid amount, you have not that much staked"
         );
-        if vault.staked >= MIN_BALANCE && amount >= vault.staked - MIN_BALANCE {
+        if amount >= vault.staked {
             //unstake all => close -- simplify UI
             return self.close();
         }
         self._unstake(amount, &mut vault);
-
-        self.total_stake -= amount;
         self.vaults.insert(&aid, &vault);
+        // TODO make FT transfers
         return Promise::new(aid).transfer(amount);
     }
 
@@ -157,14 +159,7 @@ impl Contract {
         );
 
         let rewards_str: U128 = vault.rewards.into();
-
         let to_transfer = vault.staked;
-        assert!(
-            self.total_stake >= to_transfer,
-            "total_staked {} < to_transfer {}",
-            self.total_stake,
-            to_transfer
-        );
 
         // since NEAR .transfer never fails, we better discount the unstaked here,
         // update the vault to avoid allowing double-unstake if any other promise fails,
@@ -172,7 +167,9 @@ impl Contract {
         vault.staked = 0;
         vault.rewards = 0;
         self.vaults.insert(&aid.clone(), &vault);
-        self.total_stake -= to_transfer;
+        let r = self.current_round();
+        // note: r==1 at start
+        self.rounds[r - 1] -= to_transfer;
 
         // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
         Promise::new(aid.clone()).transfer(to_transfer);
@@ -204,11 +201,11 @@ impl Contract {
     // ******************* //
     // management          //
 
-    /// changes farming start-end. For admin use only
-    pub fn set_start_end(&mut self, farming_start: u64, farming_end: u64) {
+    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
+    /// `epoch_end` attributes which controls start and end of the farming.
+    pub fn set_active(&mut self, is_open: bool) {
         self.assert_owner_calling();
-        self.farming_start = round_from_unix(farming_start);
-        self.farming_end = round_from_unix(farming_end);
+        self.is_active = is_open;
     }
 
     /*****************
@@ -298,15 +295,30 @@ impl Contract {
         }
     }
 
+    /// Returns the round number since `start`.
+    /// If now < start  return 0.
+    /// If now == start return 1.
+    /// if now == start + ROUND return 2...
+    pub fn current_round(&self) -> usize {
+        let mut now = env::block_timestamp();
+        if now > self.farming_start {
+            return 0;
+        }
+        if now > self.farming_end {
+            now = self.farming_end;
+        }
+        let r: usize = ((now - self.farming_start) / ROUND).try_into().unwrap();
+        r + 1
+    }
+
     fn create_account(&mut self, user: &AccountId) {
         self.vaults.insert(
             &user,
             &Vault {
                 // warning: previous can be set in the future
-                previous: cmp::max(current_round(), self.farming_start),
+                previous: self.current_round(),
                 staked: 0,
                 rewards: 0,
-                tokens: 0,
             },
         );
     }
@@ -316,10 +328,6 @@ impl Contract {
             env::predecessor_account_id() == self.owner_id,
             "can only be called by the owner"
         );
-    }
-
-    fn assert_open(&self) {
-        assert!(self.is_active, "Farming is not open");
     }
 }
 
