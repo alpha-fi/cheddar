@@ -2,7 +2,12 @@
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{env, AccountId, Balance, PromiseOrValue};
+use near_sdk::{env, log, AccountId, Balance, PromiseOrValue};
+
+use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+use near_contract_standards::storage_management::{
+    StorageBalance, StorageBalanceBounds, StorageManagement,
+};
 
 // use crate::constants::*;
 // use crate::errors::*;
@@ -19,24 +24,15 @@ pub struct Vault {
     /// Amount of accumulated rewards from staking;
     pub rewards: Balance,
 
-    /// Deposited NEAR.
-    pub ynear: Balance,
     /// Deposited token balances.
     pub tokens: Balance,
 }
 
-#[allow(non_fmt_panic)]
 impl Vault {
     #[inline]
     pub(crate) fn remove_token(&mut self, token: &AccountId, amount: u128) {
-        assert!(self.tokens >= amount, ERR22_NOT_ENOUGH_TOKENS);
+        assert!(self.tokens >= amount, "{}", ERR22_NOT_ENOUGH_TOKENS);
         self.tokens -= amount;
-    }
-
-    #[inline]
-    pub(crate) fn remove_near(&mut self, ynear: u128) {
-        assert!(self.ynear >= ynear + MIN_BALANCE, ERR22_NOT_ENOUGH_TOKENS);
-        self.ynear -= ynear;
     }
 }
 
@@ -101,12 +97,13 @@ impl Contract {
 
 // token deposits are done through NEP-141 ft_transfer_call to the NEARswap contract.
 #[near_bindgen]
-impl Contract {
+impl FungibleTokenReceiver for Contract {
     /**
     FungibleTokenReceiver implementation
     Callback on receiving tokens by this contract.
+    Automatically stakes receiving tokens.
     Returns zero.
-    Panics when account is not registered. */
+    Panics when account is not registered or when receiving wrong token. */
     #[allow(unused_variables)]
     fn ft_on_transfer(
         &mut self,
@@ -117,13 +114,96 @@ impl Contract {
         let token = env::predecessor_account_id();
         assert!(token == self.token_id, "Token not accepted");
         let sender_id = AccountId::from(sender_id);
-
         let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
-        // TODO: make sure we account it ocrrectly
-        v.tokens += amount.0;
+
+        let amount = amount.0;
+        // TODO: calculate all rounds.
+        self.total_stake += amount;
+
+        // TODO: make sure we account it correctly
+        v.tokens += amount;
+        self._stake(amount, &mut v);
+
         self.vaults.insert(&sender_id, &v);
-        env_log!("Deposit, {} {}", amount.0, token);
+        env_log!("Staked, {} {}", amount, token);
 
         return PromiseOrValue::Value(U128(0));
+    }
+}
+
+#[near_bindgen]
+impl StorageManagement for Contract {
+    /// Registers a new account
+    #[allow(unused_variables)]
+    #[payable]
+    fn storage_deposit(
+        &mut self,
+        account_id: Option<ValidAccountId>,
+        registration_only: Option<bool>,
+    ) -> StorageBalance {
+        let amount: Balance = env::attached_deposit();
+        let account_id = account_id
+            .map(|a| a.into())
+            .unwrap_or_else(|| env::predecessor_account_id());
+        if self.vaults.contains_key(&account_id) {
+            log!("The account is already registered, refunding the deposit");
+            if amount > 0 {
+                Promise::new(env::predecessor_account_id()).transfer(amount);
+            }
+        } else {
+            assert!(
+                amount >= MIN_BALANCE,
+                "{}",
+                "The attached deposit is less than the minimum storage balance"
+            );
+            self.create_account(&account_id);
+
+            let refund = amount - MIN_BALANCE;
+            if refund > 0 {
+                Promise::new(env::predecessor_account_id()).transfer(refund);
+            }
+        }
+        storage_balance()
+    }
+
+    /// Close the account (`close()` or `storage_unregister(true)`) to close the account and
+    /// withdraw deposited NEAR.
+    #[allow(unused_variables)]
+    fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
+        panic!("Storage withdraw not possible, close the account instead");
+    }
+
+    /// When force == true to close the account. Otherwise this is noop.
+    fn storage_unregister(&mut self, force: Option<bool>) -> bool {
+        if Some(true) == force {
+            self.close();
+            return true;
+        }
+        false
+    }
+
+    /// Mix and min balance is always MIN_BALANCE.
+    fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+        StorageBalanceBounds {
+            min: MIN_BALANCE.into(),
+            max: Some(MIN_BALANCE.into()),
+        }
+    }
+
+    /// If the account is registered the total and available balance is always MIN_BALANCE.
+    /// Otherwise None.
+    fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
+        let account_id: AccountId = account_id.into();
+        if self.vaults.contains_key(&account_id) {
+            return Some(storage_balance());
+        }
+        None
+    }
+}
+
+fn storage_balance() -> StorageBalance {
+    StorageBalance {
+        total: MIN_BALANCE.into(),
+        available: U128::from(0),
     }
 }

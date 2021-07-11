@@ -116,37 +116,6 @@ impl Contract {
     // ******************* //
     // transaction methods //
 
-    /// Stake attached &NEAR and returns total amount of stake.
-    #[payable]
-    pub fn stake(&mut self) -> U128 {
-        self.assert_open();
-        let amount = env::attached_deposit();
-        assert!(amount >= MIN_BALANCE, "{}", ERR01_MIN_STAKE);
-        let aid = env::predecessor_account_id();
-        self.total_stake += amount;
-        match self.vaults.get(&aid) {
-            Some(mut vault) => {
-                self._stake(amount, &mut vault);
-                self.vaults.insert(&aid, &vault);
-                return vault.staked.into();
-            }
-            None => {
-                self.vaults.insert(
-                    &aid,
-                    &Vault {
-                        // warning: previous can be set in the future
-                        previous: cmp::max(current_round(), self.farming_start),
-                        staked: amount,
-                        rewards: 0,
-                        tokens: 0,
-                        ynear: amount,
-                    },
-                );
-                return amount.into();
-            }
-        };
-    }
-
     /// Unstakes given amount of $NEAR and transfers it back to the user.
     /// Returns amount of staked tokens left after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
@@ -327,6 +296,19 @@ impl Contract {
                 panic!("{}", "cheddar transfer failed");
             }
         }
+    }
+
+    fn create_account(&mut self, user: &AccountId) {
+        self.vaults.insert(
+            &user,
+            &Vault {
+                // warning: previous can be set in the future
+                previous: cmp::max(current_round(), self.farming_start),
+                staked: 0,
+                rewards: 0,
+                tokens: 0,
+            },
+        );
     }
 
     fn assert_owner_calling(&self) {
