@@ -36,14 +36,15 @@ impl Contract {
     returns total account rewards
      */
     pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
+        // note: the round counting stops at self.farming_end
         let r = self.current_round();
         // if farming doesn't started, ignore the rewards update
-        // note: the round counting stops at self.farming_end
         if r == 0 {
             return 0;
         }
         let rate = big(self.rate) * big(v.staked);
-        while v.previous < r {
+        while v.previous < r - 1 {
+            // we don't farm in the current round
             let farmed = (rate / self.rounds[v.previous]).as_u128();
             v.rewards += farmed;
             println!(
@@ -130,7 +131,7 @@ impl StorageManagement for Contract {
                 "{}",
                 "The attached deposit is less than the minimum storage balance"
             );
-            self.create_account(&account_id);
+            self.create_account(&account_id, 0);
 
             let refund = amount - MIN_BALANCE;
             if refund > 0 {
