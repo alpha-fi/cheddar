@@ -7,7 +7,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,PromiseOrValue
 };
 
 pub mod constants;
@@ -135,7 +135,7 @@ impl Contract {
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
-    pub fn unstake(&mut self, amount: U128) -> Promise {
+    pub fn unstake(&mut self, amount: U128) -> PromiseOrValue<U128> {
         assert_one_yocto();
         let amount = u128::from(amount);
         assert!(amount > 0, "Invalid amount");
@@ -147,13 +147,14 @@ impl Contract {
         );
         if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
             //unstake all => close -- simplify UI
-            return self.close();
+            return PromiseOrValue::Promise(self.close());
         }
         self._unstake(amount, &mut vault);
 
         self.total_stake -= amount;
         self.save_vault(&aid, &vault);
-        return Promise::new(aid).transfer(amount);
+        Promise::new(aid).transfer(amount);
+        return PromiseOrValue::Value(amount.into())
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -255,6 +256,7 @@ impl Contract {
         ))
         .then(ext_self::mint_callback_finally(
             a.clone(),
+            amount,
             &env::current_account_id(),
             NO_DEPOSIT,
             GAS_FOR_MINT_CALLBACK_FINALLY,
@@ -291,7 +293,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn mint_callback_finally(&mut self, user: &AccountId) {
+    pub fn mint_callback_finally(&mut self, user: &AccountId, amount: U128) -> U128 {
         //Check if rewards were withdrew
         // check the vault
         let vault = self.get_vault_or_default(&user);
@@ -299,6 +301,7 @@ impl Contract {
             //if there are cheddar rewards, means the cheddar transfer failed
             panic!("{}", "cheddar transfer failed");
         }
+        amount
     }
 
     fn assert_owner_calling(&self) {
