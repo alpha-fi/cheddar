@@ -152,10 +152,8 @@ impl Contract {
     //-----------
 
     /// Get the amount of tokens that are locked in this account due to lockup or vesting.
-    pub fn get_locked_amount(&self) -> U128String {
-        // [AUDIT] NOTE: View methods don't have `predecessor_account_id`.
-        //    Just add an argument for the account ID.
-        match self.vested.get(&env::predecessor_account_id()) {
+    pub fn get_locked_amount(&self, account: AccountId) -> U128String {
+        match self.vested.get(&account) {
             Some(vesting) => vesting.compute_amount_locked().into(),
             None => 0.into(),
         }

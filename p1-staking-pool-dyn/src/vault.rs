@@ -1,7 +1,7 @@
 //! Account deposit is information per user about their balances in the exchange.
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, AccountId, Balance};
+use near_sdk::{AccountId, Balance};
 
 use crate::constants::*;
 use crate::errors::*;
@@ -19,11 +19,25 @@ pub struct Vault {
     pub rewards: Balance,
 }
 
+impl Vault {
+    pub fn is_empty(&self) -> bool {
+        self.rewards == 0 && self.staked == 0
+    }
+}
+
 impl Contract {
-    pub(crate) fn get_vault(&self) -> (AccountId, Vault) {
-        let a = env::predecessor_account_id();
-        let v = self.vaults.get(&a).expect(ERR10_NO_ACCOUNT);
-        (a, v)
+    pub(crate) fn get_vault_or_default(&self, account_id: &AccountId) -> Vault {
+        self.vaults.get(account_id).unwrap_or_default()
+    }
+
+    pub(crate) fn save_vault(&mut self, account: &AccountId, vault: &Vault) {
+        if vault.is_empty() {
+            // if the vault is empty, remove
+            self.vaults.remove(account);
+        } else {
+            // save
+            self.vaults.insert(account, vault);
+        }
     }
 
     /**
