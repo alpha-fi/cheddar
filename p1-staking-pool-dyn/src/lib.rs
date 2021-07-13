@@ -237,7 +237,7 @@ impl Contract {
     /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
     fn mint_cheddar_promise(&mut self, a: &AccountId, amount: U128) -> Promise {
-        assert!(amount.0 > 0, "amount should be positive");
+        assert!(amount.0 > 0, "amount must be positive");
         // launch async callback to mint rewards for the user
         ext_ft::mint(
             a.clone().try_into().unwrap(),
