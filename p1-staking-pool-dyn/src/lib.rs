@@ -138,10 +138,11 @@ impl Contract {
     pub fn unstake(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
         let amount = u128::from(amount);
+        assert!(amount > 0, "Invalid amount");
         let aid = env::predecessor_account_id();
         let mut vault = self.get_vault_or_default(&aid);
         assert!(
-            amount <= vault.staked + MIN_STAKE,
+            vault.staked > 0 && amount <= vault.staked + MIN_STAKE,
             "Invalid amount, you have not that much staked"
         );
         if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
@@ -200,7 +201,7 @@ impl Contract {
         // Creating 2 promises (batch) works correctly
 
         // 2nd promise is to mint cheddar rewards for the user & close the account
-        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards_str);
+        return self.mint_cheddar_promise(&aid, rewards_str);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -217,7 +218,7 @@ impl Contract {
         // zero the rewards to block double-withdraw-cheddar
         vault.rewards = 0;
         self.save_vault(&aid, &vault);
-        return self.mint_cheddar_promise_maybe_close_account(&aid, rewards.into());
+        return self.mint_cheddar_promise(&aid, rewards.into());
     }
 
     // ******************* //
@@ -235,7 +236,7 @@ impl Contract {
 
     /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
-    fn mint_cheddar_promise_maybe_close_account(&mut self, a: &AccountId, amount: U128) -> Promise {
+    fn mint_cheddar_promise(&mut self, a: &AccountId, amount: U128) -> Promise {
         assert!(amount.0 > 0, "amount should be positive");
         // launch async callback to mint rewards for the user
         ext_ft::mint(
