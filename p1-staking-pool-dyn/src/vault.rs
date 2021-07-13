@@ -45,6 +45,9 @@ impl Contract {
     returns total account rewards
      */
     pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
+        if v.is_empty() {
+            return 0 // empty vault
+        }
         assert!(
             v.previous != 0,
             "Wrong state. Previously registered epoch can't be zero"
