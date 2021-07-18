@@ -275,7 +275,7 @@ impl FungibleTokenResolver for Contract {
     ) -> U128 {
         let sender_id: AccountId = sender_id.into();
         let (used_amount, burned_amount) =
-            self.int_ft_resolve_transfer(&sender_id, receiver_id, amount);
+            self.ft_resolve_transfer_adjust(&sender_id, receiver_id, amount);
         if burned_amount > 0 {
             log!("{} tokens burned", burned_amount);
         }

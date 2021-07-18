@@ -4,34 +4,35 @@ use near_sdk::{AccountId, Balance, PromiseResult};
 use crate::*;
 
 impl Contract {
-    pub fn assert_owner_calling(&self) {
+    pub(crate) fn assert_owner_calling(&self) {
         assert!(
             env::predecessor_account_id() == self.owner_id,
             "can only be called by the owner"
         );
     }
 
-    pub fn assert_minter(&self, account_id: String) {
+    pub(crate) fn assert_minter(&self, account_id: String) {
         assert!(self.minters.contains(&account_id), "not a minter");
     }
 
     /// get stored metadata or default
     #[inline]
-    pub fn internal_get_ft_metadata(&self) -> FungibleTokenMetadata {
+    pub(crate) fn internal_get_ft_metadata(&self) -> FungibleTokenMetadata {
         self.metadata.get().unwrap()
     }
 
-    pub fn internal_unwrap_balance_of(&self, account_id: &AccountId) -> Balance {
+    #[inline]
+    pub(crate) fn internal_unwrap_balance_of(&self, account_id: &AccountId) -> Balance {
         self.accounts.get(&account_id).unwrap_or(0)
     }
 
-    pub fn mint_into(&mut self, account_id: &AccountId, amount: Balance) {
+    pub(crate) fn mint_into(&mut self, account_id: &AccountId, amount: Balance) {
         let balance = self.internal_unwrap_balance_of(account_id);
         self.internal_update_account(&account_id, balance + amount);
         self.total_supply += amount;
     }
 
-    pub fn internal_burn(&mut self, account_id: &AccountId, amount: u128) {
+    pub(crate) fn internal_burn(&mut self, account_id: &AccountId, amount: u128) {
         let balance = self.internal_unwrap_balance_of(account_id);
         assert!(balance >= amount);
         self.internal_update_account(&account_id, balance - amount);
@@ -39,7 +40,7 @@ impl Contract {
         self.total_supply -= amount;
     }
 
-    pub fn internal_transfer(
+    pub(crate) fn internal_transfer(
         &mut self,
         sender_id: &AccountId,
         receiver_id: &AccountId,
@@ -89,7 +90,7 @@ impl Contract {
 
     /// Inner method to save the given account for a given account ID.
     /// If the account balance is 0, the account is deleted instead to release storage.
-    pub fn internal_update_account(&mut self, account_id: &AccountId, balance: u128) {
+    pub(crate) fn internal_update_account(&mut self, account_id: &AccountId, balance: u128) {
         if balance == 0 {
             self.accounts.remove(account_id);
         } else {
@@ -97,10 +98,15 @@ impl Contract {
         }
     }
 
+    /// Helper method to update balance of the sender and receiver based on the return
+    /// from the `on_ft_transfer` call.
     /// Relper function which computes the amount refunded from the transfer_call and adjust
     /// sender and receiver balances.
-    /// Returns: `(amount transferred, amount_unused)`
-    pub fn int_ft_resolve_transfer(
+    /// Returns: `(amount_credited_by_reciever, amount_burned)`, where
+    /// * amount_credited_by_receiver - is the amount transferred to the receiver after
+    ///   adjusting the balances
+    /// * amount_burned - when sender account is deleted we burn the unused tokens.
+    pub(crate) fn ft_resolve_transfer_adjust(
         &mut self,
         sender_id: &AccountId,
         receiver_id: ValidAccountId,
