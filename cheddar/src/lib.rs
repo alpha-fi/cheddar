@@ -13,16 +13,13 @@
 /// an external contract, a farm for example, to be able to mint tokens
 /// - Ultra-Lazy ft-metadata: ft-metadata is not stored unless changed
 ///
-use near_sdk::collections::LookupMap;
-
 use near_contract_standards::fungible_token::{
     core::FungibleTokenCore,
     metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC},
     resolver::FungibleTokenResolver,
 };
-
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LazyOption;
+use near_sdk::collections::{LazyOption, LookupMap};
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
     assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance, Gas,
@@ -49,28 +46,33 @@ pub struct Contract {
     metadata: LazyOption<FungibleTokenMetadata>,
 
     pub accounts: LookupMap<AccountId, Balance>,
-
     pub owner_id: AccountId,
-
     pub minters: Vec<AccountId>,
-
     pub total_supply: Balance,
-
     pub vested: LookupMap<AccountId, VestingRecord>,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the given total supply owned by the given `owner_id`.
-
     #[init]
     pub fn new(owner_id: AccountId) -> Self {
-        //validate default metadata
-        internal::default_ft_metadata().assert_valid();
+        let m = FungibleTokenMetadata {
+            spec: FT_METADATA_SPEC.to_string(),
+            name: "Cheddar".to_string(),
+            symbol: "Cheddar".to_string(),
+            icon: Some(String::from(
+                r###"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><style>.a{fill:#F4C647;}.b{fill:#EEAF4B;}</style><path d="M45 19.5v5.5l4.8 0.6 0-11.4c-0.1-3.2-11.2-6.7-24.9-6.7 -13.7 0-24.8 3.6-24.9 6.7L0 32.5c0 3.2 10.7 7.1 24.5 7.1 0.2 0 0.3 0 0.5 0V21.5l-4.7-7.2L45 19.5z" class="a"/><path d="M25 31.5v-10l-4.7-7.2L45 19.5v5.5l-14-1.5v10C31 33.5 25 31.5 25 31.5z" fill="#F9E295"/><path d="M24.9 7.5C11.1 7.5 0 11.1 0 14.3s10.7 7.2 24.5 7.2c0.2 0 0.3 0 0.5 0l-4.7-7.2 25 5.2c2.8-0.9 4.4-4 4.4-5.2C49.8 11.1 38.6 7.5 24.9 7.5z" class="b"/><path d="M36 29v19.6c8.3 0 15.6-1 20-2.5V26.5L31 23.2 36 29z" class="a"/><path d="M31 23.2l5 5.8c8.2 0 15.6-1 19.9-2.5L31 23.2z" class="b"/><polygon points="36 29 36 48.5 31 42.5 31 23.2 " fill="#FCDF76"/></svg>"###,
+            )),
+            reference: None,
+            reference_hash: None,
+            decimals: 24,
+        };
+        m.assert_valid();
 
         Self {
             owner_id: owner_id.clone(),
-            metadata: LazyOption::new(b"m".to_vec(), None),
+            metadata: LazyOption::new(b"m".to_vec(), Some(&m)),
             accounts: LookupMap::new(b"a".to_vec()),
             minters: vec![owner_id],
             total_supply: 0,
@@ -87,7 +89,7 @@ impl Contract {
     #[payable]
     pub fn mint(&mut self, account_id: &AccountId, amount: U128String) {
         assert_one_yocto();
-        env_log!("Minting {} CHEDDAR to {}", amount.0, account_id);
+        log!("Minting {} CHEDDAR to {}", amount.0, account_id);
         self.assert_minter(env::predecessor_account_id());
         self.mint_into(account_id, amount.0);
     }

@@ -7,7 +7,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, log, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
 };
 
 pub mod constants;
@@ -171,7 +171,7 @@ impl Contract {
         assert_one_yocto();
         let (aid, mut vault) = self.get_vault();
         self.ping(&mut vault);
-        env_log!(
+        log!(
             "Closing {} account, farmed CHEDDAR: {}",
             &aid,
             vault.rewards
@@ -244,7 +244,7 @@ impl Contract {
                 let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
                 v.rewards += amount.0;
                 self.vaults.insert(&sender_id, &v);
-                env_log!("cheddar transfer failed")
+                log!("cheddar transfer failed")
             }
         };
     }
@@ -259,16 +259,6 @@ impl Contract {
     fn assert_open(&self) {
         assert!(self.is_active, "Farming is not open");
     }
-}
-
-#[macro_export]
-macro_rules! env_log {
-    ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        // io::_print(msg);
-        println!("{}", msg);
-        env::log(msg.as_bytes())
-    }}
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

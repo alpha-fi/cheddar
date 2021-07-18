@@ -7,7 +7,8 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,PromiseOrValue
+    assert_one_yocto, env, log, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseOrValue,
+    PromiseResult,
 };
 
 pub mod constants;
@@ -154,7 +155,7 @@ impl Contract {
         self.total_stake -= amount;
         self.save_vault(&aid, &vault);
         Promise::new(aid).transfer(amount);
-        return PromiseOrValue::Value(amount.into())
+        return PromiseOrValue::Value(amount.into());
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -168,7 +169,7 @@ impl Contract {
         let aid = env::predecessor_account_id();
         let mut vault = self.get_vault_or_default(&aid);
         self.ping(&mut vault);
-        env_log!(
+        log!(
             "Closing {} account, farmed CHEDDAR: {}",
             &aid,
             vault.rewards
@@ -277,7 +278,7 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                env_log!("cheddar rewards withdrew {}", amount.0);
+                log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
             }
 
@@ -314,16 +315,6 @@ impl Contract {
     fn assert_open(&self) {
         assert!(self.is_active, "Farming is not open");
     }
-}
-
-#[macro_export]
-macro_rules! env_log {
-    ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        // io::_print(msg);
-        println!("{}", msg);
-        env::log(msg.as_bytes())
-    }}
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
