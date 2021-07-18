@@ -96,14 +96,21 @@ impl Contract {
         }
     }
 
-    /// Returns amount of staked NEAR, farmed CHEDDAR and the current round.
-    pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
+    /// Returns amount of total staked NEAR, user staked NEAR, farmed CHEDDAR
+    /// and the current round.
+    pub fn status(&self, account_id: AccountId) -> (U128, U128, U128, u64) {
         let mut v = self.get_vault_or_default(&account_id);
         return (
+            self.total_stake.into(),
             v.staked.into(),
             self.ping(&mut v).into(),
             round_to_unix(current_round()),
         );
+    }
+
+    /// Return amount of currently staked NEAR (in total).
+    pub fn total_staked(&self) -> U128 {
+        self.total_stake.into()
     }
 
     // ******************* //
