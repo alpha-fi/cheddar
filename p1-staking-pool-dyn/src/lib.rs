@@ -93,6 +93,7 @@ impl Contract {
             farming_start: round_to_unix(self.farming_start),
             farming_end: round_to_unix(self.farming_end),
             total_rewards: self.total_rewards.into(),
+            total_stake: self.total_stake.into(),
         }
     }
 

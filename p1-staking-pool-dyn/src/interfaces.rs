@@ -41,4 +41,5 @@ pub struct ContractParams {
     pub farming_start: u64,
     pub farming_end: u64,
     pub total_rewards: U128,
+    pub total_stake: U128,
 }
