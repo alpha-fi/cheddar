@@ -33,6 +33,7 @@ const NO_DEPOSIT: Balance = 0;
 
 near_sdk::setup_alloc!();
 
+mod empty_nep_145;
 mod internal;
 mod util;
 mod vesting;
@@ -57,17 +58,7 @@ impl Contract {
     /// Initializes the contract with the given total supply owned by the given `owner_id`.
     #[init]
     pub fn new(owner_id: AccountId) -> Self {
-        let m = FungibleTokenMetadata {
-            spec: FT_METADATA_SPEC.to_string(),
-            name: "Cheddar".to_string(),
-            symbol: "Cheddar".to_string(),
-            icon: Some(String::from(
-                r###"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><style>.a{fill:#F4C647;}.b{fill:#EEAF4B;}</style><path d="M45 19.5v5.5l4.8 0.6 0-11.4c-0.1-3.2-11.2-6.7-24.9-6.7 -13.7 0-24.8 3.6-24.9 6.7L0 32.5c0 3.2 10.7 7.1 24.5 7.1 0.2 0 0.3 0 0.5 0V21.5l-4.7-7.2L45 19.5z" class="a"/><path d="M25 31.5v-10l-4.7-7.2L45 19.5v5.5l-14-1.5v10C31 33.5 25 31.5 25 31.5z" fill="#F9E295"/><path d="M24.9 7.5C11.1 7.5 0 11.1 0 14.3s10.7 7.2 24.5 7.2c0.2 0 0.3 0 0.5 0l-4.7-7.2 25 5.2c2.8-0.9 4.4-4 4.4-5.2C49.8 11.1 38.6 7.5 24.9 7.5z" class="b"/><path d="M36 29v19.6c8.3 0 15.6-1 20-2.5V26.5L31 23.2 36 29z" class="a"/><path d="M31 23.2l5 5.8c8.2 0 15.6-1 19.9-2.5L31 23.2z" class="b"/><polygon points="36 29 36 48.5 31 42.5 31 23.2 " fill="#FCDF76"/></svg>"###,
-            )),
-            reference: None,
-            reference_hash: None,
-            decimals: 24,
-        };
+        let m = Contract::default_metadata();
         m.assert_valid();
 
         Self {
@@ -313,7 +304,6 @@ trait FungibleTokenResolver {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use near_sdk::test_utils::{accounts, VMContextBuilder};
-    use near_sdk::MockedBlockchain;
     use near_sdk::{testing_env, Balance};
 
     use super::*;
