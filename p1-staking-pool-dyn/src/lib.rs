@@ -248,7 +248,7 @@ impl Contract {
     fn mint_cheddar_promise(&mut self, a: &AccountId, amount: U128) -> Promise {
         assert!(amount.0 > 0, "amount must be positive");
         // launch async callback to mint rewards for the user
-        ext_ft::mint(
+        ext_ft::ft_mint(
             a.clone().try_into().unwrap(),
             amount,
             &self.cheddar_id,
