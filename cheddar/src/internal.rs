@@ -4,7 +4,7 @@ use near_sdk::{AccountId, Balance, PromiseResult};
 use crate::*;
 
 impl Contract {
-    pub(crate) fn assert_owner_calling(&self) {
+    pub(crate) fn assert_owner(&self) {
         assert!(
             env::predecessor_account_id() == self.owner_id,
             "can only be called by the owner"

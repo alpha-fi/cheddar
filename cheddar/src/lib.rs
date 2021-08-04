@@ -99,11 +99,15 @@ impl Contract {
         self.internal_burn(&env::predecessor_account_id(), amount.0);
     }
 
+    //-----------
+    //-- Admin
+    //-----------
+
     /// owner can add/remove minters
     #[payable]
     pub fn add_minter(&mut self, account_id: AccountId) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         if let Some(_) = self.minters.iter().position(|x| *x == account_id) {
             //found
             panic!("already in the list");
@@ -114,7 +118,7 @@ impl Contract {
     #[payable]
     pub fn remove_minter(&mut self, account_id: &AccountId) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         if let Some(inx) = self.minters.iter().position(|x| x == account_id) {
             //found
             let _removed = self.minters.swap_remove(inx);
@@ -130,7 +134,7 @@ impl Contract {
     #[payable]
     pub fn set_metadata_icon(&mut self, svg_string: String) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         let mut m = self.internal_get_ft_metadata();
         m.icon = Some(svg_string);
         self.metadata.set(&m);
@@ -139,12 +143,22 @@ impl Contract {
     #[payable]
     pub fn set_metadata_reference(&mut self, reference: String, reference_hash: String) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         let mut m = self.internal_get_ft_metadata();
         m.reference = Some(reference);
         m.reference_hash = Some(reference_hash.as_bytes().to_vec().into());
         m.assert_valid();
         self.metadata.set(&m);
+    }
+
+    pub fn set_owner(&mut self, owner_id: ValidAccountId) {
+        self.assert_owner();
+        self.owner_id = owner_id.as_ref().clone();
+    }
+
+    /// Get the owner of this account.
+    pub fn get_owner(&self) -> AccountId {
+        self.owner_id.clone()
     }
 
     //-----------
@@ -194,7 +208,7 @@ impl Contract {
     /// Only owner can call this function.
     pub fn cancel_vesting(&mut self, account_id: &AccountId) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         match self.vested.get(&account_id) {
             Some(vesting) => {
                 if vesting.compute_amount_locked() == 0 {
@@ -208,9 +222,8 @@ impl Contract {
     }
 
     //---------------------------------------------------------------------------
-    /// Sputnik DAO remote-upgrade receiver
+    /// Remote upgrade
     /// can be called by a remote-upgrade proposal
-    ///
     #[cfg(target_arch = "wasm32")]
     pub fn upgrade(self) {
         assert!(env::predecessor_account_id() == self.owner_id);
