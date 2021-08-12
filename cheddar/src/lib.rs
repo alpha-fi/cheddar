@@ -26,7 +26,8 @@ use near_sdk::{
     PanicOnDefault, PromiseOrValue,
 };
 
-//-- Sputnik DAO remote upgrade requires BLOCKCHAIN_INTERFACE low-level access
+// Remote upgrade (when using function call to do self upgrade) requires
+// BLOCKCHAIN_INTERFACE low-level access
 #[cfg(target_arch = "wasm32")]
 use near_sdk::env::BLOCKCHAIN_INTERFACE;
 
@@ -39,9 +40,9 @@ near_sdk::setup_alloc!();
 
 mod empty_nep_145;
 mod internal;
+mod migrations;
 mod util;
 mod vesting;
-mod migrations;
 
 use util::*;
 use vesting::{VestingRecord, VestingRecordJSON};
@@ -81,9 +82,10 @@ impl Contract {
         return self.owner_id.clone();
     }
 
-    /// minters can mint more
+    /// Mints new tokens to the `account_id`.
+    /// Panics if the function is calle by a not registered minter.
     #[payable]
-    pub fn mint(&mut self, account_id: &AccountId, amount: U128String) {
+    pub fn ft_mint(&mut self, account_id: &AccountId, amount: U128String) {
         assert_one_yocto();
         log!("Minting {} CHEDDAR to {}", amount.0, account_id);
         self.assert_minter(env::predecessor_account_id());
@@ -97,11 +99,15 @@ impl Contract {
         self.internal_burn(&env::predecessor_account_id(), amount.0);
     }
 
+    //-----------
+    //-- Admin
+    //-----------
+
     /// owner can add/remove minters
     #[payable]
     pub fn add_minter(&mut self, account_id: AccountId) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         if let Some(_) = self.minters.iter().position(|x| *x == account_id) {
             //found
             panic!("already in the list");
@@ -112,7 +118,7 @@ impl Contract {
     #[payable]
     pub fn remove_minter(&mut self, account_id: &AccountId) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         if let Some(inx) = self.minters.iter().position(|x| x == account_id) {
             //found
             let _removed = self.minters.swap_remove(inx);
@@ -128,7 +134,7 @@ impl Contract {
     #[payable]
     pub fn set_metadata_icon(&mut self, svg_string: String) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         let mut m = self.internal_get_ft_metadata();
         m.icon = Some(svg_string);
         self.metadata.set(&m);
@@ -137,12 +143,22 @@ impl Contract {
     #[payable]
     pub fn set_metadata_reference(&mut self, reference: String, reference_hash: String) {
         assert_one_yocto();
-        self.assert_owner_calling();
+        self.assert_owner();
         let mut m = self.internal_get_ft_metadata();
         m.reference = Some(reference);
         m.reference_hash = Some(reference_hash.as_bytes().to_vec().into());
         m.assert_valid();
         self.metadata.set(&m);
+    }
+
+    pub fn set_owner(&mut self, owner_id: ValidAccountId) {
+        self.assert_owner();
+        self.owner_id = owner_id.as_ref().clone();
+    }
+
+    /// Get the owner of this account.
+    pub fn get_owner(&self) -> AccountId {
+        self.owner_id.clone()
     }
 
     //-----------
@@ -168,7 +184,7 @@ impl Contract {
         }
     }
 
-    //minters can mint with vesting/locked periods
+    /// minters can mint with vesting/locked periods
     #[payable]
     pub fn mint_vested(
         &mut self,
@@ -177,7 +193,7 @@ impl Contract {
         cliff_timestamp: U64String,
         end_timestamp: U64String,
     ) {
-        self.mint(account_id, amount);
+        self.ft_mint(account_id, amount);
         let record =
             VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
         match self.vested.insert(&account_id, &record) {
@@ -187,11 +203,12 @@ impl Contract {
     }
 
     #[payable]
-    /// terminate vesting before the cliff
-    /// burn the tokens
-    pub fn terminate_vesting(&mut self, account_id: &AccountId) {
+    /// Cancels token allocation in a vesting account. All not vested tokens
+    /// will be burned.
+    /// Only owner can call this function.
+    pub fn cancel_vesting(&mut self, account_id: &AccountId) {
         assert_one_yocto();
-        self.assert_minter(env::predecessor_account_id());
+        self.assert_owner();
         match self.vested.get(&account_id) {
             Some(vesting) => {
                 if vesting.compute_amount_locked() == 0 {
@@ -204,11 +221,9 @@ impl Contract {
         }
     }
 
-
     //---------------------------------------------------------------------------
-    /// Sputnik DAO remote-upgrade receiver
+    /// Remote upgrade
     /// can be called by a remote-upgrade proposal
-    ///
     #[cfg(target_arch = "wasm32")]
     pub fn upgrade(self) {
         assert!(env::predecessor_account_id() == self.owner_id);
@@ -258,7 +273,6 @@ impl Contract {
             });
         }
     }
-
 }
 
 #[near_bindgen]

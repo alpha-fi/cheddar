@@ -4,7 +4,7 @@ use near_sdk::{AccountId, Balance, PromiseResult};
 use crate::*;
 
 impl Contract {
-    pub(crate) fn assert_owner_calling(&self) {
+    pub(crate) fn assert_owner(&self) {
         assert!(
             env::predecessor_account_id() == self.owner_id,
             "can only be called by the owner"
@@ -39,18 +39,18 @@ impl Contract {
     }
 
     #[inline]
-    pub(crate) fn internal_unwrap_balance_of(&self, account_id: &AccountId) -> Balance {
+    pub(crate) fn unwrap_balance_of(&self, account_id: &AccountId) -> Balance {
         self.accounts.get(&account_id).unwrap_or(0)
     }
 
     pub(crate) fn mint_into(&mut self, account_id: &AccountId, amount: Balance) {
-        let balance = self.internal_unwrap_balance_of(account_id);
+        let balance = self.unwrap_balance_of(account_id);
         self.internal_update_account(&account_id, balance + amount);
         self.total_supply += amount;
     }
 
     pub(crate) fn internal_burn(&mut self, account_id: &AccountId, amount: u128) {
-        let balance = self.internal_unwrap_balance_of(account_id);
+        let balance = self.unwrap_balance_of(account_id);
         assert!(balance >= amount);
         self.internal_update_account(&account_id, balance - amount);
         assert!(self.total_supply >= amount);
@@ -71,7 +71,7 @@ impl Contract {
         assert!(amount > 0, "The amount should be a positive number");
 
         // remove from sender
-        let sender_balance = self.internal_unwrap_balance_of(sender_id);
+        let sender_balance = self.unwrap_balance_of(sender_id);
         assert!(
             amount <= sender_balance,
             "The account doesn't have enough balance {}",
@@ -96,7 +96,7 @@ impl Contract {
         }
 
         // add to receiver
-        let receiver_balance = self.internal_unwrap_balance_of(receiver_id);
+        let receiver_balance = self.unwrap_balance_of(receiver_id);
         self.internal_update_account(&receiver_id, receiver_balance + amount);
 
         log!("Transfer {} from {} to {}", amount, sender_id, receiver_id);
