@@ -294,6 +294,7 @@ impl Contract {
 
             PromiseResult::Failed => {
                 // mint failed, restore cheddar rewards
+                log!("Cheddar minting failed, recovering the account");
                 let mut vault = self.get_vault_or_default(&user);
                 vault.rewards += amount.0;
                 self.ping(&mut vault);
