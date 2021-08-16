@@ -16,11 +16,11 @@ export POLICY='{
       "kind": { "Group": ["alantest.testnet", "alan1.testnet"]
       },
       "permissions": [
-        ":Finalize",
-        ":AddProposal",
-        ":VoteApprove",
-        ":VoteReject",
-        ":VoteRemove"
+        "*:Finalize",
+        "*:AddProposal",
+        "*:VoteApprove",
+        "*:VoteReject",
+        "*:VoteRemove"
       ],
       "vote_policy": {}
     },
@@ -28,9 +28,9 @@ export POLICY='{
       "name": "community",
       "kind": { "Group": ["alan1.testnet"] },
       "permissions": [
-        ":Finalize",
-        ":VoteApprove",
-        ":VoteReject",
+        "*:Finalize",
+        "*:VoteApprove",
+        "*:VoteReject",
         "*:VoteRemove"
       ],
       "vote_policy": {}
@@ -53,9 +53,8 @@ read input
 near delete $CONTRACT_ACC $MASTER_ACC
 near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC --initialBalance 20
 near deploy --wasmFile=res/sputnikdao2.wasm --initFunction "new" --initArgs "{\"config\": {\"name\": \"testpolicy\", \"purpose\": \"Test DAO Policy\", \"metadata\":\"\"}, \"policy\": $POLICY" --accountId $CONTRACT_ACC
-
-near call $CONTRACT_ACC add_proposal "{\"proposal\": {\"description\": \"Cheddar Genesis\", \"kind\": {\"FunctionCall\": {\"receiver_id\": \"$TOKEN_ACC\", \"actions\": [{\"method_name\": \"mint\", \"args\": \"$ARGS_MINT\", \"deposit\": \"1\", \"gas\": \"20000000000000\"}]}}}}" --accountId $COUNCIL_ACC --amount 10
-
+near view $CONTRACT_ACC get_policy
+echo "DAO succesfully deployed"
 
 ##redeploy only
 #near deploy $CONTRACT_ACC --wasmFile=res/sputnikdao2.wasm  --accountId $MASTER_ACC
