@@ -2,7 +2,7 @@ set -e
 NETWORK=testnet
 OWNER=cheddardao.$NETWORK
 MASTER_ACC=$OWNER
-CONTRACT_ACC=dao.$MASTER_ACC
+CONTRACT_ACC=dao50.$MASTER_ACC
 TOKEN_ACC=token.cheddar.testnet
 TREASURY_ACC=treasury.$MASTER_ACC
 
@@ -50,7 +50,7 @@ ARGS_MINT=`echo '{"account_id": "treasury.cheddardao.testnet", "amount": "200000
 echo "Delete $CONTRACT_ACC? are you sure? Ctrl-C to cancel"
 read input
 
-near delete $CONTRACT_ACC $MASTER_ACC
+#near delete $CONTRACT_ACC $MASTER_ACC
 near create-account $CONTRACT_ACC --masterAccount $MASTER_ACC --initialBalance 20
 near deploy --wasmFile=res/sputnikdao2.wasm --initFunction "new" --initArgs "{\"config\": {\"name\": \"testpolicy\", \"purpose\": \"Test DAO Policy\", \"metadata\":\"\"}, \"policy\": $POLICY" --accountId $CONTRACT_ACC
 near view $CONTRACT_ACC get_policy
