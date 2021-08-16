@@ -138,7 +138,8 @@ impl Contract {
         return vault.staked.into();
     }
 
-    /// Unstakes given amount of $NEAR and transfers it back to the user.
+    /// Unstakes given amount of $NEAR and transfers it back to the user. If the user leaves in
+    /// his deposit less than `MIN_STAKE` then we close his account.
     /// Returns amount of staked tokens left after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet validation.
@@ -150,11 +151,11 @@ impl Contract {
         let aid = env::predecessor_account_id();
         let mut vault = self.get_vault_or_default(&aid);
         assert!(
-            vault.staked > 0 && amount <= vault.staked + MIN_STAKE,
+            amount <= vault.staked,
             "Invalid amount, you have not that much staked"
         );
-        if vault.staked >= MIN_STAKE && amount >= vault.staked - MIN_STAKE {
-            //unstake all => close -- simplify UI
+        if vault.staked - amount <= MIN_STAKE {
+            // unstake all => close -- simplify UI
             return PromiseOrValue::Promise(self.close());
         }
         self._unstake(amount, &mut vault);
