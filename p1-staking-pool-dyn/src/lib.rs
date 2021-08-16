@@ -158,8 +158,8 @@ impl Contract {
             // unstake all => close -- simplify UI
             return PromiseOrValue::Promise(self.close());
         }
-        self._unstake(amount, &mut vault);
 
+        self._unstake(amount, &mut vault);
         self.total_stake -= amount;
         self.save_vault(&aid, &vault);
         Promise::new(aid).transfer(amount);
