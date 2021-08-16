@@ -1,8 +1,0 @@
-1. Rewards every 1 min
-2. Add functions:
-	 pay-and-stake
-	 unstake-and-withdraw
-
-Simplification: 
-* Rewards every near block (approx 1 second), use multiplication
-
