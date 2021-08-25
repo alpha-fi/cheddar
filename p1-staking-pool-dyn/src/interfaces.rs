@@ -29,7 +29,7 @@ pub trait ExtSelf {
 #[ext_contract(ext_ft)]
 pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-    fn ft_mint(&mut self, account_id: AccountId, amount: U128);
+    fn ft_mint(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
 #[derive(Deserialize, Serialize)]

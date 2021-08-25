@@ -85,11 +85,20 @@ impl Contract {
     /// Mints new tokens to the `account_id`.
     /// Panics if the function is calle by a not registered minter.
     #[payable]
-    pub fn ft_mint(&mut self, account_id: &AccountId, amount: U128String) {
+    pub fn ft_mint(&mut self, receiver_id: &AccountId, amount: U128String, memo: Option<String>) {
         assert_one_yocto();
-        log!("Minting {} CHEDDAR to {}", amount.0, account_id);
+        log!(
+            "Minting {} CHEDDAR to {}, memo: {}",
+            amount.0,
+            receiver_id,
+            if let Some(m) = memo {
+                m
+            } else {
+                "".to_string()
+            }
+        );
         self.assert_minter(env::predecessor_account_id());
-        self.mint_into(account_id, amount.0);
+        self.mint(receiver_id, amount.0);
     }
 
     /// burns `amount` from own supply of coins
@@ -193,7 +202,7 @@ impl Contract {
         cliff_timestamp: U64String,
         end_timestamp: U64String,
     ) {
-        self.ft_mint(account_id, amount);
+        self.ft_mint(account_id, amount, Some("vesting".to_string()));
         let record =
             VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
         match self.vested.insert(&account_id, &record) {

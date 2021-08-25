@@ -43,7 +43,7 @@ impl Contract {
         self.accounts.get(&account_id).unwrap_or(0)
     }
 
-    pub(crate) fn mint_into(&mut self, account_id: &AccountId, amount: Balance) {
+    pub(crate) fn mint(&mut self, account_id: &AccountId, amount: Balance) {
         let balance = self.unwrap_balance_of(account_id);
         self.internal_update_account(&account_id, balance + amount);
         self.total_supply += amount;
