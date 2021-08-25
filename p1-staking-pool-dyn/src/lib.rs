@@ -201,6 +201,8 @@ impl Contract {
         // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
         assert!(to_transfer > 0);
         let p = Promise::new(aid.clone()).transfer(to_transfer);
+
+        // if there are no rewards, no need to call self.mint_cheddar_promise
         if rewards == 0 {
             return p;
         }
