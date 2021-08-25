@@ -26,8 +26,14 @@ impl Vault {
 }
 
 impl Contract {
+    #[inline]
     pub(crate) fn get_vault_or_default(&self, account_id: &AccountId) -> Vault {
         self.vaults.get(account_id).unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn get_vault(&self, account_id: &AccountId) -> Vault {
+        self.vaults.get(account_id).expect("account not registered")
     }
 
     pub(crate) fn save_vault(&mut self, account: &AccountId, vault: &Vault) {
@@ -46,7 +52,7 @@ impl Contract {
      */
     pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
         if v.is_empty() {
-            return 0 // empty vault
+            return 0; // empty vault
         }
         assert!(
             v.previous != 0,
