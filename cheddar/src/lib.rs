@@ -26,11 +26,6 @@ use near_sdk::{
     PanicOnDefault, PromiseOrValue,
 };
 
-// Remote upgrade (when using function call to do self upgrade) requires
-// BLOCKCHAIN_INTERFACE low-level access
-#[cfg(target_arch = "wasm32")]
-use near_sdk::env::BLOCKCHAIN_INTERFACE;
-
 const TGAS: Gas = 1_000_000_000_000;
 const GAS_FOR_RESOLVE_TRANSFER: Gas = 5 * TGAS;
 const GAS_FOR_FT_TRANSFER_CALL: Gas = 25 * TGAS + GAS_FOR_RESOLVE_TRANSFER;
@@ -211,10 +206,10 @@ impl Contract {
         }
     }
 
-    #[payable]
     /// Cancels token allocation in a vesting account. All not vested tokens
     /// will be burned.
     /// Only owner can call this function.
+    #[payable]
     pub fn cancel_vesting(&mut self, account_id: &AccountId) {
         assert_one_yocto();
         self.assert_owner();
@@ -227,59 +222,6 @@ impl Contract {
                 self.vested.remove(&account_id);
             }
             None => panic!("account not vested"),
-        }
-    }
-
-    //---------------------------------------------------------------------------
-    /// Remote upgrade
-    /// can be called by a remote-upgrade proposal
-    #[cfg(target_arch = "wasm32")]
-    pub fn upgrade(self) {
-        assert!(env::predecessor_account_id() == self.owner_id);
-        //input is code:<Vec<u8> on REGISTER 0
-        //log!("bytes.length {}", code.unwrap().len());
-        const GAS_FOR_UPGRADE: u64 = 10 * TGAS; //gas occupied by this fn
-        const BLOCKCHAIN_INTERFACE_NOT_SET_ERR: &str = "Blockchain interface not set.";
-        //after upgrade we call *pub fn migrate()* on the NEW CODE
-        let current_id = env::current_account_id().into_bytes();
-        let migrate_method_name = "migrate".as_bytes().to_vec();
-        let attached_gas = env::prepaid_gas() - env::used_gas() - GAS_FOR_UPGRADE;
-        unsafe {
-            BLOCKCHAIN_INTERFACE.with(|b| {
-                // Load input (new contract code) into register 0
-                b.borrow()
-                    .as_ref()
-                    .expect(BLOCKCHAIN_INTERFACE_NOT_SET_ERR)
-                    .input(0);
-
-                //prepare self-call promise
-                let promise_id = b
-                    .borrow()
-                    .as_ref()
-                    .expect(BLOCKCHAIN_INTERFACE_NOT_SET_ERR)
-                    .promise_batch_create(current_id.len() as _, current_id.as_ptr() as _);
-
-                //1st action, deploy/upgrade code (takes code from register 0)
-                b.borrow()
-                    .as_ref()
-                    .expect(BLOCKCHAIN_INTERFACE_NOT_SET_ERR)
-                    .promise_batch_action_deploy_contract(promise_id, u64::MAX as _, 0);
-
-                //2nd action, schedule a call to "migrate()".
-                //Will execute on the **new code**
-                b.borrow()
-                    .as_ref()
-                    .expect(BLOCKCHAIN_INTERFACE_NOT_SET_ERR)
-                    .promise_batch_action_function_call(
-                        promise_id,
-                        migrate_method_name.len() as _,
-                        migrate_method_name.as_ptr() as _,
-                        0 as _,
-                        0 as _,
-                        0 as _,
-                        attached_gas,
-                    );
-            });
         }
     }
 }
