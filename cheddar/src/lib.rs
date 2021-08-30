@@ -197,15 +197,15 @@ impl Contract {
     #[payable]
     pub fn mint_vested(
         &mut self,
-        account_id: &AccountId,
+        receiver_id: &AccountId,
         amount: U128String,
         cliff_timestamp: U64String,
         end_timestamp: U64String,
     ) {
-        self.ft_mint(account_id, amount, Some("vesting".to_string()));
+        self.ft_mint(receiver_id, amount, Some("vesting".to_string()));
         let record =
             VestingRecord::new(amount.into(), cliff_timestamp.into(), end_timestamp.into());
-        match self.vested.insert(&account_id, &record) {
+        match self.vested.insert(&receiver_id, &record) {
             Some(_) => panic!("account already vested"),
             None => {}
         }
