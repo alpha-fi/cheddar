@@ -3,34 +3,42 @@ use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{assert_one_yocto, env, log, AccountId, Balance, Promise, StorageUsage};
+use near_sdk::{assert_one_yocto, env, log, AccountId, Balance, Promise};
 
 // The storage size in bytes for one account.
 // 16 (u128) + 64 (acc id)
-const ACCOUNT_STORAGE: StorageUsage = 16 + 64;
-const ACCOUNT_STORAGE_STR: String = "80".into();
+const ACCOUNT_STORAGE: u128 = 16 + 64; // must be same as above
 
 impl Contract {
-    pub fn internal_register_account(&mut self, account_id: &AccountId) {
+    /// Registers an account and panics if the account was already registered.
+    fn register_account(&mut self, account_id: &AccountId) {
         if self.accounts.insert(account_id, &0).is_some() {
             env::panic("The account is already registered".as_bytes());
         }
     }
 
+    /// It's like `register_account` but doesn't panic if the account already exists.
+    #[inline]
+    fn try_register_account(&mut self, account_id: &AccountId) {
+        if !self.accounts.contains_key(account_id) {
+            self.accounts.insert(account_id, &0);
+        }
+    }
+
     /// Internal method that returns the Account ID and the balance in case the account was
-    /// unregistered.
-    pub(crate) fn internal_storage_unregister(
-        &mut self,
-        force: Option<bool>,
-    ) -> Option<(AccountId, Balance)> {
+    /// registered.
+    fn internal_storage_unregister(&mut self, force: Option<bool>) -> Option<(AccountId, Balance)> {
         assert_one_yocto();
         let account_id = env::predecessor_account_id();
         let force = force.unwrap_or(false);
         if let Some(balance) = self.accounts.get(&account_id) {
             if balance == 0 || force {
                 self.accounts.remove(&account_id);
-                self.total_supply -= balance;
-                Promise::new(account_id.clone()).transfer(self.storage_balance_bounds().min.0 + 1);
+                if balance != 0 {
+                    self.total_supply -= balance;
+                    // we add 1 because the function requires 1 yocto payment
+                    Promise::new(account_id.clone()).transfer(storage_deposit() + 1);
+                }
                 Some((account_id, balance))
             } else {
                 env::panic(
@@ -43,21 +51,15 @@ impl Contract {
             None
         }
     }
-
-    fn internal_storage_balance_of(&self, account_id: &AccountId) -> Option<StorageBalance> {
-        if self.accounts.contains_key(account_id) {
-            Some(StorageBalance {
-                total: ACCOUNT_STORAGE_STR.into(),
-                available: 0.into(),
-            })
-        } else {
-            None
-        }
-    }
 }
 
+// We implement the NEP-145 standard for the Cheddar. However user can't make additional
+// deposits. User registres an account by attaching `storage_deposit()` of NEAR. Deposits above
+// that amount will be refunded.
+// NOTE: when using farming / minting we will register an account for the user for free.
 impl StorageManagement for Contract {
-    // `registration_only` doesn't affect the implementation for vanilla fungible token.
+    /// Registers an account and records the deposit.
+    /// `registration_only` doesn't affect the implementation for vanilla fungible token.
     #[allow(unused_variables)]
     fn storage_deposit(
         &mut self,
@@ -76,20 +78,19 @@ impl StorageManagement for Contract {
                 Promise::new(env::predecessor_account_id()).transfer(amount);
             }
         } else {
-            let min_balance = self.storage_balance_bounds().min.0;
-            if amount < min_balance {
+            let d = storage_deposit();
+            if amount < d {
                 env::panic(
                     "The attached deposit is less than the minimum storage balance".as_bytes(),
                 );
             }
-
-            self.internal_register_account(&account_id);
-            let refund = amount - min_balance;
+            self.register_account(&account_id);
+            let refund = amount - d;
             if refund > 0 {
                 Promise::new(env::predecessor_account_id()).transfer(refund);
             }
         }
-        self.internal_storage_balance_of(&account_id).unwrap()
+        return storage_balance();
     }
 
     /// While storage_withdraw normally allows the caller to retrieve `available` balance, the basic
@@ -101,14 +102,14 @@ impl StorageManagement for Contract {
     fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
         assert_one_yocto();
         let predecessor_account_id = env::predecessor_account_id();
-        if let Some(storage_balance) = self.internal_storage_balance_of(&predecessor_account_id) {
+        if self.accounts.contains_key(&predecessor_account_id) {
             match amount {
                 Some(amount) if amount.0 > 0 => {
                     env::panic(
                         "The amount is greater than the available storage balance".as_bytes(),
                     );
                 }
-                _ => storage_balance,
+                _ => storage_balance(),
             }
         } else {
             env::panic(
@@ -122,14 +123,29 @@ impl StorageManagement for Contract {
     }
 
     fn storage_balance_bounds(&self) -> StorageBalanceBounds {
-        let required_storage_balance = Balance::from(ACCOUNT_STORAGE) * env::storage_byte_cost();
+        let d = U128::from(storage_deposit());
         StorageBalanceBounds {
-            min: required_storage_balance.into(),
-            max: Some(required_storage_balance.into()),
+            min: d,
+            max: Some(d),
         }
     }
 
     fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
-        self.internal_storage_balance_of(&account_id.into())
+        if self.accounts.contains_key(&account_id.into()) {
+            Some(storage_balance())
+        } else {
+            None
+        }
     }
+}
+
+fn storage_balance() -> StorageBalance {
+    StorageBalance {
+        total: U128::from(storage_deposit()),
+        available: 0.into(),
+    }
+}
+
+fn storage_deposit() -> u128 {
+    ACCOUNT_STORAGE * env::storage_byte_cost()
 }
