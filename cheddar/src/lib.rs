@@ -33,9 +33,10 @@ const NO_DEPOSIT: Balance = 0;
 
 near_sdk::setup_alloc!();
 
-mod empty_nep_145;
+// mod empty_nep_145;
 mod internal;
 mod migrations;
+mod storage;
 mod util;
 mod vesting;
 
@@ -189,6 +190,7 @@ impl Contract {
     }
 
     /// minters can mint with vesting/locked periods
+    /// NOTE: we don't charge storage fees for vesting accounts.
     #[payable]
     pub fn mint_vested(
         &mut self,
