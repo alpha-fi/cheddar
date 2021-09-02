@@ -33,9 +33,10 @@ const NO_DEPOSIT: Balance = 0;
 
 near_sdk::setup_alloc!();
 
-mod empty_nep_145;
+// mod empty_nep_145;
 mod internal;
 mod migrations;
+mod storage;
 mod util;
 mod vesting;
 
