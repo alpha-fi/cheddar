@@ -190,6 +190,7 @@ impl Contract {
     }
 
     /// minters can mint with vesting/locked periods
+    /// NOTE: we don't charge storage fees for vesting accounts.
     #[payable]
     pub fn mint_vested(
         &mut self,

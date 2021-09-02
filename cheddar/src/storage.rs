@@ -19,7 +19,7 @@ impl Contract {
 
     /// It's like `register_account` but doesn't panic if the account already exists.
     #[inline]
-    fn try_register_account(&mut self, account_id: &AccountId) {
+    pub(crate) fn try_register_account(&mut self, account_id: &AccountId) {
         if !self.accounts.contains_key(account_id) {
             self.accounts.insert(account_id, &0);
         }
