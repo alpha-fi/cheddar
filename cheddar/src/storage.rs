@@ -2,27 +2,56 @@ use crate::Contract;
 use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{assert_one_yocto, env, log, AccountId, Balance, Promise};
 
 // The storage size in bytes for one account.
-// 16 (u128) + 64 (acc id)
-const ACCOUNT_STORAGE: u128 = 16 + 64; // must be same as above
+// 2*16 (two u128) + 64 (acc id)
+const ACCOUNT_STORAGE: u128 = 3 * 16 + 64;
+
+/// AccBalance is a record of user near and token holding. Near holding is used
+/// to cover storage cost.
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct AccBalance {
+    pub near: Balance,
+    pub token: Balance,
+}
 
 impl Contract {
     /// Registers an account and panics if the account was already registered.
-    fn register_account(&mut self, account_id: &AccountId) {
-        if self.accounts.insert(account_id, &0).is_some() {
+    fn register_account(&mut self, account_id: &AccountId, deposit: Balance) {
+        if self
+            .accounts
+            .insert(
+                account_id,
+                &AccBalance {
+                    near: deposit,
+                    token: 0,
+                },
+            )
+            .is_some()
+        {
             env::panic("The account is already registered".as_bytes());
         }
     }
 
     /// It's like `register_account` but doesn't panic if the account already exists.
     #[inline]
-    pub(crate) fn try_register_account(&mut self, account_id: &AccountId) {
-        if !self.accounts.contains_key(account_id) {
-            self.accounts.insert(account_id, &0);
+    pub(crate) fn try_register_account(
+        &mut self,
+        account_id: &AccountId,
+        deposit: Balance,
+    ) -> AccBalance {
+        if let Some(a) = self.accounts.get(account_id) {
+            return a;
         }
+        let a = AccBalance {
+            near: deposit,
+            token: 0,
+        };
+        self.accounts.insert(account_id, &a);
+        return a;
     }
 
     /// Internal method that returns the Account ID and the balance in case the account was
@@ -32,14 +61,14 @@ impl Contract {
         let account_id = env::predecessor_account_id();
         let force = force.unwrap_or(false);
         if let Some(balance) = self.accounts.get(&account_id) {
-            if balance == 0 || force {
+            if balance.token == 0 || force {
                 self.accounts.remove(&account_id);
-                if balance != 0 {
-                    self.total_supply -= balance;
+                if balance.token != 0 {
+                    self.total_supply -= balance.token;
                     // we add 1 because the function requires 1 yocto payment
-                    Promise::new(account_id.clone()).transfer(storage_deposit() + 1);
+                    Promise::new(account_id.clone()).transfer(balance.near + 1);
                 }
-                Some((account_id, balance))
+                Some((account_id, balance.near))
             } else {
                 env::panic(
                     "Can't unregister the account with the positive balance without force"
@@ -84,7 +113,7 @@ impl StorageManagement for Contract {
                     "The attached deposit is less than the minimum storage balance".as_bytes(),
                 );
             }
-            self.register_account(&account_id);
+            self.register_account(&account_id, d);
             let refund = amount - d;
             if refund > 0 {
                 Promise::new(env::predecessor_account_id()).transfer(refund);
@@ -131,7 +160,7 @@ impl StorageManagement for Contract {
     }
 
     fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
-        if self.accounts.contains_key(&account_id.into()) {
+        if self.accounts.contains_key(account_id.as_ref()) {
             Some(storage_balance())
         } else {
             None

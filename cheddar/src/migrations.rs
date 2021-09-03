@@ -3,24 +3,25 @@
 //contract main state migration
 //-----------------------------
 
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap};
-use near_sdk::near_bindgen;
+use crate::storage::AccBalance;
 use crate::*;
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::LookupMap;
+use near_sdk::near_bindgen;
 //---------------------------------------------------
 //  PREVIOUS Main Contract State for state migrations
 //---------------------------------------------------
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
-    pub struct OldState {
-        metadata: LazyOption<FungibleTokenMetadata>,
+pub struct OldState {
+    metadata: LazyOption<FungibleTokenMetadata>,
 
-        pub accounts: LookupMap<AccountId, Balance>,
-        pub owner_id: AccountId,
-        pub minters: Vec<AccountId>,
-        pub total_supply: Balance,
-        pub vested: LookupMap<AccountId, VestingRecord>,
-    }
+    pub accounts: LookupMap<AccountId, AccBalance>,
+    pub owner_id: AccountId,
+    pub minters: Vec<AccountId>,
+    pub total_supply: Balance,
+    pub vested: LookupMap<AccountId, VestingRecord>,
+}
 
 #[near_bindgen]
 impl Contract {
@@ -57,6 +58,6 @@ impl Contract {
             minters: old.minters,
             total_supply: old.total_supply,
             vested: old.vested,
-        }
+        };
     }
 }
