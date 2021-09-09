@@ -1,10 +1,10 @@
-use crate::Contract;
+use crate::*;
 use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{ValidAccountId, U128};
-use near_sdk::{assert_one_yocto, env, log, AccountId, Balance, Promise};
+use near_sdk::{assert_one_yocto, env, log, near_bindgen, AccountId, Balance, Promise};
 
 // The storage size in bytes for one account.
 // 2*16 (two u128) + 64 (acc id)
@@ -20,7 +20,7 @@ pub struct AccBalance {
 
 impl Contract {
     /// Registers an account and panics if the account was already registered.
-    fn register_account(&mut self, account_id: &AccountId, deposit: Balance) {
+    pub(crate) fn register_account(&mut self, account_id: &AccountId, deposit: Balance) {
         if self
             .accounts
             .insert(
@@ -86,10 +86,12 @@ impl Contract {
 // deposits. User registres an account by attaching `storage_deposit()` of NEAR. Deposits above
 // that amount will be refunded.
 // NOTE: when using farming / minting we will register an account for the user for free.
+#[near_bindgen]
 impl StorageManagement for Contract {
     /// Registers an account and records the deposit.
     /// `registration_only` doesn't affect the implementation for vanilla fungible token.
     #[allow(unused_variables)]
+    #[payable]
     fn storage_deposit(
         &mut self,
         account_id: Option<ValidAccountId>,
@@ -107,14 +109,15 @@ impl StorageManagement for Contract {
                 Promise::new(env::predecessor_account_id()).transfer(amount);
             }
         } else {
-            let d = storage_deposit();
-            if amount < d {
-                env::panic(
-                    "The attached deposit is less than the minimum storage balance".as_bytes(),
-                );
-            }
-            self.register_account(&account_id, d);
-            let refund = amount - d;
+            let cost = storage_cost();
+            assert!(
+                amount >= cost,
+                "attached deposit: {},  required: {}",
+                amount,
+                cost
+            );
+            self.register_account(&account_id, cost);
+            let refund = amount - cost;
             if refund > 0 {
                 Promise::new(env::predecessor_account_id()).transfer(refund);
             }
@@ -152,7 +155,7 @@ impl StorageManagement for Contract {
     }
 
     fn storage_balance_bounds(&self) -> StorageBalanceBounds {
-        let d = U128::from(storage_deposit());
+        let d = U128::from(storage_cost());
         StorageBalanceBounds {
             min: d,
             max: Some(d),
@@ -170,11 +173,11 @@ impl StorageManagement for Contract {
 
 fn storage_balance() -> StorageBalance {
     StorageBalance {
-        total: U128::from(storage_deposit()),
+        total: U128::from(storage_cost()),
         available: 0.into(),
     }
 }
 
-fn storage_deposit() -> u128 {
+fn storage_cost() -> u128 {
     ACCOUNT_STORAGE * env::storage_byte_cost()
 }

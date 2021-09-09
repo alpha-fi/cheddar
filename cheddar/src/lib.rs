@@ -1,7 +1,3 @@
-// [AUDIT] NOTE: Storage cost is still an issue. An account with 125 bytes costs 0.00125 `NEAR`.
-// I think the transaction to create it is cheaper than that, so it's possible to lock the contract
-// due to the storage limitation.
-
 /// Cheddar Token
 ///
 /// Functionality:

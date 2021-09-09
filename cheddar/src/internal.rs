@@ -12,6 +12,7 @@ impl Contract {
         );
     }
 
+    #[inline]
     pub(crate) fn assert_minter(&self, account_id: String) {
         assert!(self.minters.contains(&account_id), "not a minter");
     }
@@ -89,7 +90,7 @@ impl Contract {
                 } else {
                     assert!(
                         sender_balance.token >= locked,
-                        "Vested account, balance can't go lower than {}",
+                        "Account with vesting, balance can't go lower than {}",
                         locked
                     );
                 }
