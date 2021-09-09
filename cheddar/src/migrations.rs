@@ -13,7 +13,7 @@ use near_sdk::near_bindgen;
 //---------------------------------------------------
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct OldState {
+struct OldState {
     metadata: LazyOption<FungibleTokenMetadata>,
 
     pub accounts: LookupMap<AccountId, AccBalance>,
@@ -35,6 +35,7 @@ impl Contract {
     /// If you have changed state, you need to implement migration from old state (keep the old struct with different name to deserialize it first).
     ///
     #[init(ignore_state)] //do not auto-load state before this function
+    #[private]
     pub fn migrate() -> Self {
         // read state with OLD struct
         // uncomment when state migration is required on upgrade

@@ -2,26 +2,6 @@
 
 use crate::*;
 
-// Remote upgrade (when using function call to do self upgrade) requires
-// BLOCKCHAIN_INTERFACE low-level access
-#[cfg(target_arch = "wasm32")]
-use near_sdk::env::BLOCKCHAIN_INTERFACE;
-
-#[near_bindgen]
-impl Contract {
-    /// State migration function.
-    /// For next version upgrades, change this function.
-    #[init(ignore_state)]
-    #[private]
-    pub fn migrate() -> Self {
-        // old state
-        let contract: Contract = env::state_read().expect("ERR_NOT_INITIALIZED");
-        // do some changes and return a new state
-        // ..
-        contract
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 mod upgrade {
     use near_sdk::env::BLOCKCHAIN_INTERFACE;
