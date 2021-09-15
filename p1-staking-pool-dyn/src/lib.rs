@@ -249,7 +249,7 @@ impl Contract {
         ext_ft::ft_mint(
             a.clone().try_into().unwrap(),
             1.into(),
-            Some("adming farming 1 yocto".to_string()),
+            Some("admin farming 1 yocto".to_string()),
             &self.cheddar_id,
             ONE_YOCTO,
             GAS_FOR_FT_TRANSFER,
