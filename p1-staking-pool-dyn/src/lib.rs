@@ -76,13 +76,6 @@ impl Contract {
     // ************ //
     // view methods //
 
-    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
-    /// `epoch_end` attributes which controls start and end of the farming.
-    pub fn set_active(&mut self, is_open: bool) {
-        self.assert_owner_calling();
-        self.is_active = is_open;
-    }
-
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
         ContractParams {
@@ -236,11 +229,32 @@ impl Contract {
     // ******************* //
     // management          //
 
+    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
+    /// `epoch_end` attributes which controls start and end of the farming.
+    pub fn set_active(&mut self, is_open: bool) {
+        self.assert_owner_calling();
+        self.is_active = is_open;
+    }
+
     /// changes farming start-end. For admin use only
     pub fn set_start_end(&mut self, farming_start: u64, farming_end: u64) {
         self.assert_owner_calling();
         self.farming_start = round_from_unix(farming_start);
         self.farming_end = round_from_unix(farming_end);
+    }
+
+    pub fn farm_yocto(&mut self) {
+        self.assert_owner_calling();
+        let a = env::predecessor_account_id();
+        ext_ft::ft_mint(
+            a.clone().try_into().unwrap(),
+            1.into(),
+            Some("adming farming 1 yocto".to_string()),
+            &self.cheddar_id,
+            ONE_YOCTO,
+            GAS_FOR_FT_TRANSFER,
+        );
+        self.total_rewards += 1;
     }
 
     /*****************
