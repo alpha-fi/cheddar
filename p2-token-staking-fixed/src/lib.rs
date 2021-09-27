@@ -42,13 +42,10 @@ pub struct Contract {
     pub farming_end: u64,
     /// total number of farmed $CHEDDAR
     pub total_rewards: u128,
-    // TODO, remove?
-    pub rounds: Vec<u128>,
-
     /// rewards accumulator: running sum of staked rewards per token.
     s: u128,
     /// round number when the s was previously updated.
-    s_round: usize,
+    s_round: u64,
     /// total amount of currently staked tokens.
     t: u128,
 }
@@ -73,7 +70,6 @@ impl Contract {
             farming_end > farming_start,
             "Start must be after end, end at there must be at least one round difference"
         );
-        let num_rounds: usize = (farming_end - farming_start).try_into().unwrap();
         Self {
             owner_id: owner_id.into(),
             cheddar: cheddar.into(),
@@ -84,8 +80,6 @@ impl Contract {
             total_rewards: 0,
             farming_start,
             farming_end,
-            rounds: vec![0u128; num_rounds],
-
             s: 0,
             s_round: 0,
             t: 0,
@@ -97,8 +91,6 @@ impl Contract {
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
-        let r = self.current_round();
-        let staked = self.rounds.get(r).unwrap_or(&0);
         ContractParams {
             owner_id: self.owner_id.clone(),
             farming_token: self.cheddar.clone(),
@@ -108,12 +100,13 @@ impl Contract {
             is_open: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
-            staked_in_round: (*staked).into(),
+            total_staked: self.t.into(),
         }
     }
 
     /// Returns amount of staked tokens, farmed CHEDDAR and the current round.
-    pub fn status(&self, account_id: AccountId) -> (U128, U128, usize) {
+    // TODO: this should not be a mutable function
+    pub fn status(&mut self, account_id: AccountId) -> (U128, U128, u64) {
         return match self.vaults.get(&account_id) {
             Some(mut v) => (
                 v.staked.into(),
@@ -131,30 +124,28 @@ impl Contract {
     // transaction methods //
 
     /// Unstakes given amount of tokens and transfers it back to the user.
-    /// If amount is >= then the amount staked then we close the account. NOTE: account once
-    /// closed must re-register to stake again.
+    /// If amount equals to the amount staked then we close the account.
+    /// NOTE: account once closed must re-register to stake again.
     /// Returns amount of staked tokens left after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet 2FA.
     #[payable]
     pub fn unstake(&mut self, amount: U128) -> Promise {
+        self.assert_is_active();
         assert_one_yocto();
         let amount_u = amount.0;
-        let a: env::predecessor_account_id();
-        let mut vault = self.get_vault(&a);
-        assert!(
-            amount_u <= vault.staked
-            ERR30_NOT_ENOUGH_STAKE
-        );
-        if amount_u == vault.staked {
+        let a = env::predecessor_account_id();
+        let mut v = self.get_vault(&a);
+        assert!(amount_u <= v.staked, "{}", ERR30_NOT_ENOUGH_STAKE);
+        if amount_u == v.staked {
             //unstake all => close -- simplify UI
             return self.close();
         }
-        self.ping(v);
-        v.staked -= amount;
-        self.t -= amount;
+        self.ping(&mut v);
+        v.staked -= amount_u;
+        self.t -= amount_u;
 
-        self.vaults.insert(&a, &vault);
+        self.vaults.insert(&a, &v);
         self.return_tokens(a.clone(), amount)
             .then(ext_self::return_tokens_callback(
                 a,
@@ -166,54 +157,54 @@ impl Contract {
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
-    /// and all NEAR to the caller.
+    /// and all staked tokens back to the caller.
     /// Returns amount of farmed CHEDDAR.
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
     pub fn close(&mut self) -> Promise {
+        self.assert_is_active();
         assert_one_yocto();
-        let a: env::predecessor_account_id();
-        let mut vault = self.get_vault(&a);
-        self.ping(&mut vault);
-        log!("Closing {} account, farmed CHEDDAR: {}", &a, vault.rewards);
+        let a = env::predecessor_account_id();
+        let mut v = self.get_vault(&a);
+        self.ping(&mut v);
+        log!("Closing {} account, farmed CHEDDAR: {}", &a, v.rewards);
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
-        if vault.staked == 0 && vault.rewards == 0 {
+        if v.staked == 0 && v.rewards == 0 {
             self.vaults.remove(&a);
             return Promise::new(a.clone()).transfer(NEAR_BALANCE);
         }
 
-        self.t -= amount;
+        self.t -= v.staked;
 
-        // We update the values here, and recover in a callback if minting fails
-        vault.staked = 0;
-        vault.rewards = 0;
-        self.vaults.insert(&a.clone(), &vault);
-        return self.mint_cheddar(&a, rewards_str, staked.into(), true);
+        // We remove the vault but we will try to recover in a callback if a minting will fail.
+        self.vaults.remove(&a);
+        return self.mint_cheddar(&a, v.rewards.into(), v.staked.into());
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
-    /// Call `close` to remove the account and return all NEAR deposit.
+    /// Call `close` to remove the account and return all staked tokens.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
     #[payable]
     pub fn withdraw_crop(&mut self) -> Promise {
-        let a: env::predecessor_account_id();
-        let mut vault = self.get_vault(&a);
-        self.ping(&mut vault);
-        let rewards = vault.rewards;
+        self.assert_is_active();
+        let a = env::predecessor_account_id();
+        let mut v = self.get_vault(&a);
+        self.ping(&mut v);
+        let rewards = v.rewards;
         // zero the rewards to block double-withdraw-cheddar
-        vault.rewards = 0;
-        self.vaults.insert(&a.clone(), &vault);
-        return self.mint_cheddar(&a, rewards.into(), 0.into(), false);
+        v.rewards = 0;
+        self.vaults.insert(&a.clone(), &v);
+        return self.mint_cheddar(&a, rewards.into(), 0.into());
     }
 
     // ******************* //
     // management          //
 
-    /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
-    /// `epoch_end` attributes which controls start and end of the farming.
+    /// Opens or closes smart contract operations. When the contract is not active, it won't
+    /// reject every user call, until it will be open back again.
     pub fn set_active(&mut self, is_open: bool) {
         self.assert_owner();
         self.is_active = is_open;
@@ -221,6 +212,10 @@ impl Contract {
 
     /*****************
      * internal methods */
+
+    fn assert_is_active(&self) {
+        assert!(self.is_active, "contract is not active");
+    }
 
     /// transfers staked tokens back to the user
     #[inline]
@@ -279,10 +274,8 @@ impl Contract {
 
     /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
-    fn mint_cheddar(&mut self, a: &AccountId, cheddar: U128, tokens: U128, close: bool) -> Promise {
-        // AUDIT: TODO: Assert or check that the amount is positive.
-
-        // TODO verify callback and close parameter
+    fn mint_cheddar(&mut self, a: &AccountId, cheddar: U128, tokens: U128) -> Promise {
+        // TODO verify callback
         let mut p;
         if cheddar.0 != 0 {
             p = ext_ft::mint(
@@ -298,14 +291,12 @@ impl Contract {
                 p = p.then(ext_self::mint_callback(
                     a.clone(),
                     cheddar,
-                    close,
                     &env::current_account_id(),
                     0,
                     GAS_FOR_MINT_CALLBACK,
                 ));
             }
-        } else {
-            // NOTE: both can't be empty - we handle that in the caller
+        } else if tokens.0 != 0 {
             p = self.return_tokens(a.clone(), tokens.clone()).then(
                 ext_self::return_tokens_callback(
                     a.clone(),
@@ -315,6 +306,9 @@ impl Contract {
                     GAS_FOR_MINT_CALLBACK,
                 ),
             );
+        } else {
+            // nothing to mint nor return.
+            return Promise::new(a.clone());
         }
 
         p.then(ext_self::mint_callback_finally(
@@ -326,15 +320,9 @@ impl Contract {
     }
 
     #[private]
-    pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
-        log!(
-            "mint_callback, env::promise_results_count()={}",
-            env::promise_results_count()
-        );
-        // after the async call to mint rewards for the user
-        assert_eq!(
-            env::promise_results_count(),
-            1,
+    pub fn mint_callback(&mut self, user: AccountId, amount: U128) {
+        assert!(
+            env::promise_results_count() <= 2,
             "{}",
             ERR25_WITHDRAW_CALLBACK
         );
@@ -344,22 +332,14 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
-                if close {
-                    // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
-                    //    in case of weird async race conditions, the vault might get new staked balance.
-                    self.vaults.remove(&user);
-                    env::log(b"account closed");
-                }
             }
 
             PromiseResult::Failed => {
                 // mint failed, restore cheddar rewards
-                // AUDIT: TODO: If the vault was closed before by another TX, then the contract
-                //     should recover the vault here.
-                let mut vault = self.vaults.get(&user).expect(ERR10_NO_ACCOUNT);
-                // AUDIT: TODO: You may also want to ping the vault.
-                vault.rewards = amount.0;
-                self.vaults.insert(&user, &vault);
+                // If the vault was closed before by another TX, then we must recover the state
+                let mut v = self.get_vault_or_default(&user);
+                v.rewards += amount.0;
+                self.vaults.insert(&user, &v);
             }
         }
     }
@@ -367,8 +347,8 @@ impl Contract {
     #[private]
     pub fn mint_callback_finally(&mut self, user: &AccountId) {
         //Check if rewards were withdrew
-        if let Some(vault) = self.vaults.get(&user) {
-            if vault.rewards != 0 {
+        if let Some(v) = self.vaults.get(&user) {
+            if v.rewards != 0 {
                 //if there are cheddar rewards, means the cheddar transfer failed
                 panic!("{}", "cheddar transfer failed");
             }
@@ -379,7 +359,7 @@ impl Contract {
     /// If now < start  return 0.
     /// If now == start return 1.
     /// if now == start + ROUND return 2...
-    fn current_round(&self) -> usize {
+    fn current_round(&self) -> u64 {
         let mut now = env::block_timestamp() / SECOND;
         if now > self.farming_start {
             return 0;
@@ -393,7 +373,7 @@ impl Contract {
                 adjust = 2
             };
         }
-        let r: usize = ((now - self.farming_start) / ROUND).try_into().unwrap();
+        let r: u64 = ((now - self.farming_start) / ROUND).try_into().unwrap();
         r + adjust
     }
 
@@ -402,7 +382,7 @@ impl Contract {
             &user,
             &Vault {
                 // warning: previous can be set in the future
-                s: self.current_round(),
+                s: self.s,
                 staked,
                 rewards: 0,
             },

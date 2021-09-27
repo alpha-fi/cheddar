@@ -18,7 +18,7 @@ use crate::*;
 #[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
     /// Contract.s value when the last ping was called and rewards calculated
-    pub s: usize,
+    pub s: Balance,
     /// amount of staking token locked in this vault
     pub staked: Balance,
     /// Amount of accumulated, not withdrawn rewards from staking;
@@ -50,7 +50,7 @@ impl Contract {
     Update rewards for locked tokens in past epochs
     returns total account rewards
      */
-    pub(crate) fn ping(&self, v: &mut Vault) -> u128 {
+    pub(crate) fn ping(&mut self, v: &mut Vault) -> u128 {
         // note: the round counting stops at self.farming_end
         let r = self.current_round();
         // if farming doesn't started, ignore the rewards update
@@ -69,7 +69,7 @@ impl Contract {
             return 0;
         }
 
-        let farmed = self.staked * (self.s - v.s);
+        let farmed = v.staked * (self.s - v.s);
         v.rewards += farmed;
         println!("FARMING {}, user={}", farmed, v.staked);
 
@@ -78,12 +78,12 @@ impl Contract {
     }
 
     /// updates the rewards accumulator
-    pub(crate) fn ping_s(&self, round: usize) {
+    pub(crate) fn ping_s(&mut self, round: u64) {
         // covers also when round == 0
         if self.s_round == round {
             return;
         }
-        self.s += (round - self.s_round) * self.rate / self.t;
+        self.s += u128::from(round - self.s_round) * self.rate / self.t;
         self.s_round = round;
     }
 }
@@ -104,6 +104,7 @@ impl FungibleTokenReceiver for Contract {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
+        self.assert_is_active();
         let token = env::predecessor_account_id();
         assert!(
             token == self.staking_token,
@@ -111,13 +112,13 @@ impl FungibleTokenReceiver for Contract {
             self.staking_token
         );
         assert!(amount.0 > 0, "staked amount must be positive");
-        let sender_id: AccountId = sender_id.as_ref();
-        let mut v = self.get_vault(&sender_id);
+        let sender_id: &AccountId = sender_id.as_ref();
+        let mut v = self.get_vault(sender_id);
 
-        self.ping(&v);
+        self.ping(&mut v);
         v.staked += amount.0;
-        self.vaults.insert(&sender_id, &v);
-        log!("Staked, {} {}", amount, token);
+        self.vaults.insert(sender_id, &v);
+        log!("Staked, {} {}", amount.0, token);
 
         self.t += amount.0;
 
@@ -169,6 +170,7 @@ impl StorageManagement for Contract {
 
     /// When force == true to close the account. Otherwise this is noop.
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
+        self.assert_is_active();
         if Some(true) == force {
             self.close();
             return true;

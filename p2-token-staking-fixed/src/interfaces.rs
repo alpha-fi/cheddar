@@ -23,7 +23,7 @@ pub trait StakingPool {
 #[ext_contract(ext_self)]
 pub trait ExtSelf {
     fn return_tokens_callback(&mut self, user: AccountId, amount: U128);
-    fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool);
+    fn mint_callback(&mut self, user: AccountId, amount: U128);
     fn mint_callback_finally(&mut self, user: AccountId);
 }
 
@@ -43,5 +43,5 @@ pub struct ContractParams {
     pub is_open: bool,
     pub farming_start: u64,
     pub farming_end: u64,
-    pub staked_in_round: U128,
+    pub total_staked: U128,
 }
