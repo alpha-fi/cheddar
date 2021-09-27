@@ -4,55 +4,67 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
+    assert_one_yocto, env, log, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
 };
 
 pub mod constants;
 pub mod errors;
 pub mod interfaces;
-pub mod util;
+// pub mod util;
 pub mod vault;
 
 use crate::interfaces::*;
-use crate::{constants::*, errors::*, util::*, vault::*};
+use crate::{constants::*, errors::*, vault::*};
 
 near_sdk::setup_alloc!();
 
+/// P2 rewards distribution contract implementing the "Scalable Reward Distribution on the Ethereum Blockchain"
+/// algorithm:
+/// https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a40977462982470_scalable-reward-distribution-paper.pdf
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
     pub owner_id: AccountId,
     /// farm token
-    pub cheddar_id: AccountId,
-    /// staked token
-    pub token_id: AccountId,
-    // if farming is opened
+    pub cheddar: AccountId,
+    /// NEP-141 token for staking
+    pub staking_token: AccountId,
+    /// if farming is opened
     pub is_active: bool,
-    //user vaults
+    /// user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     /// amount of $CHEDDAR farmed during each round. Round duration is defined in constants.rs
-    /// Farmed $CHEDDAR are distributed to all users proportionally to their NEAR stake.
-    pub rate: u128, //cheddar per round per near (round = 1 second)
-    /// farming starts in unix timestamp (seconds).
+    /// Farmed $CHEDDAR are distributed to all users proportionally to their stake.
+    pub rate: u128,
+    /// unix timestamp (seconds) when the farming starts.
     pub farming_start: u64,
-    /// farming ends (first time with no farming) in unix timestamp (seconds).
+    /// unix timestamp (seconds) when the farming ends (first time with no farming).
     pub farming_end: u64,
-    /// total number of farmed and withdrawn rewards
+    /// total number of farmed $CHEDDAR
     pub total_rewards: u128,
+    // TODO, remove?
     pub rounds: Vec<u128>,
+
+    /// rewards accumulator: running sum of staked rewards per token.
+    s: u128,
+    /// round number when the s was previously updated.
+    s_round: usize,
+    /// total amount of currently staked tokens.
+    t: u128,
 }
 
 #[near_bindgen]
 impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
-    /// * `farming_start` & `farming_end` are unix timestamps
-    /// * `reward_rate` is amount of yoctoCheddars per 1 NEAR (1e24 yNEAR)
+    /// * `farming_start` & `farming_end` are unix timestamps (in seconds).
+    /// * `reward_rate` is amount of yoctoCheddars per 1e24 staked tokens (usually tokens are
+    ///    denominated in 1e24 on NEAR).
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
-        cheddar_id: ValidAccountId,
-        token_id: ValidAccountId,
+        cheddar: ValidAccountId,
+        staked_token: ValidAccountId,
         reward_rate: U128,
         farming_start: u64,
         farming_end: u64,
@@ -64,8 +76,8 @@ impl Contract {
         let num_rounds: usize = (farming_end - farming_start).try_into().unwrap();
         Self {
             owner_id: owner_id.into(),
-            cheddar_id: cheddar_id.into(),
-            token_id: token_id.into(),
+            cheddar: cheddar.into(),
+            staking_token: staked_token.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
@@ -73,6 +85,10 @@ impl Contract {
             farming_start,
             farming_end,
             rounds: vec![0u128; num_rounds],
+
+            s: 0,
+            s_round: 0,
+            t: 0,
         }
     }
 
@@ -85,8 +101,8 @@ impl Contract {
         let staked = self.rounds.get(r).unwrap_or(&0);
         ContractParams {
             owner_id: self.owner_id.clone(),
-            farming_token: self.cheddar_id.clone(),
-            staked_token: self.token_id.clone(),
+            farming_token: self.cheddar.clone(),
+            staked_token: self.staking_token.clone(),
             farming_rate: self.rate.into(),
             round_len: ROUND,
             is_open: self.is_active,
@@ -96,7 +112,7 @@ impl Contract {
         }
     }
 
-    /// Returns amount of staked NEAR, farmed CHEDDAR and the current round.
+    /// Returns amount of staked tokens, farmed CHEDDAR and the current round.
     pub fn status(&self, account_id: AccountId) -> (U128, U128, usize) {
         return match self.vaults.get(&account_id) {
             Some(mut v) => (
@@ -123,17 +139,21 @@ impl Contract {
     #[payable]
     pub fn unstake(&mut self, amount: U128) -> Promise {
         assert_one_yocto();
-        let amount_u = u128::from(amount);
-        let (a, mut vault) = self.get_vault();
+        let amount_u = amount.0;
+        let a: env::predecessor_account_id();
+        let mut vault = self.get_vault(&a);
         assert!(
-            amount_u <= vault.staked + MIN_BALANCE,
-            "Invalid amount, you have not that much staked"
+            amount_u <= vault.staked
+            ERR30_NOT_ENOUGH_STAKE
         );
-        if amount_u >= vault.staked {
+        if amount_u == vault.staked {
             //unstake all => close -- simplify UI
             return self.close();
         }
-        self._unstake(amount_u, &mut vault);
+        self.ping(v);
+        v.staked -= amount;
+        self.t -= amount;
+
         self.vaults.insert(&a, &vault);
         self.return_tokens(a.clone(), amount)
             .then(ext_self::return_tokens_callback(
@@ -153,31 +173,24 @@ impl Contract {
     #[payable]
     pub fn close(&mut self) -> Promise {
         assert_one_yocto();
-        let (aid, mut vault) = self.get_vault();
+        let a: env::predecessor_account_id();
+        let mut vault = self.get_vault(&a);
         self.ping(&mut vault);
-        env_log!(
-            "Closing {} account, farmed CHEDDAR: {}",
-            &aid,
-            vault.rewards
-        );
+        log!("Closing {} account, farmed CHEDDAR: {}", &a, vault.rewards);
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
         if vault.staked == 0 && vault.rewards == 0 {
-            self.vaults.remove(&aid);
-            return Promise::new(aid.clone()).transfer(MIN_BALANCE);
+            self.vaults.remove(&a);
+            return Promise::new(a.clone()).transfer(NEAR_BALANCE);
         }
 
-        let rewards_str: U128 = vault.rewards.into();
-        let staked = vault.staked;
-        // note: r==1 at start
-        let r = self.current_round();
-        self.rounds[r] -= staked;
+        self.t -= amount;
 
         // We update the values here, and recover in a callback if minting fails
         vault.staked = 0;
         vault.rewards = 0;
-        self.vaults.insert(&aid.clone(), &vault);
-        return self.mint_cheddar(&aid, rewards_str, staked.into(), true);
+        self.vaults.insert(&a.clone(), &vault);
+        return self.mint_cheddar(&a, rewards_str, staked.into(), true);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -186,13 +199,14 @@ impl Contract {
     /// Panics if user has not staked anything.
     #[payable]
     pub fn withdraw_crop(&mut self) -> Promise {
-        let (aid, mut vault) = self.get_vault();
+        let a: env::predecessor_account_id();
+        let mut vault = self.get_vault(&a);
         self.ping(&mut vault);
         let rewards = vault.rewards;
         // zero the rewards to block double-withdraw-cheddar
         vault.rewards = 0;
-        self.vaults.insert(&aid.clone(), &vault);
-        return self.mint_cheddar(&aid, rewards.into(), 0.into(), false);
+        self.vaults.insert(&a.clone(), &vault);
+        return self.mint_cheddar(&a, rewards.into(), 0.into(), false);
     }
 
     // ******************* //
@@ -201,19 +215,21 @@ impl Contract {
     /// Opens or closes the farming. For admin use only. Smart contract has `epoch_start` and
     /// `epoch_end` attributes which controls start and end of the farming.
     pub fn set_active(&mut self, is_open: bool) {
-        self.assert_owner_calling();
+        self.assert_owner();
         self.is_active = is_open;
     }
 
     /*****************
      * internal methods */
+
+    /// transfers staked tokens back to the user
     #[inline]
     fn return_tokens(&self, user: AccountId, amount: U128) -> Promise {
         return ext_ft::ft_transfer(
             user,
             amount,
             Some("unstaking".to_string()),
-            &self.cheddar_id,
+            &self.cheddar,
             1,
             GAS_FOR_FT_TRANSFER,
         );
@@ -225,7 +241,7 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                env_log!("tokens returned {}", amount.0);
+                log!("tokens returned {}", amount.0);
 
                 // TODO
                 // if close {
@@ -237,7 +253,7 @@ impl Contract {
             }
 
             PromiseResult::Failed => {
-                env_log!(
+                log!(
                     "token transfer failed {}. recovering account state",
                     amount.0
                 );
@@ -249,7 +265,7 @@ impl Contract {
                     }
                     None => {
                         // weird case - account was deleted in the meantime.
-                        env_log!(
+                        log!(
                             "Account deleted, user {} funds ({} tokens) not recovered and account recreated.",
                             &user,
                             amount.0
@@ -272,7 +288,7 @@ impl Contract {
             p = ext_ft::mint(
                 a.clone().try_into().unwrap(),
                 cheddar,
-                &self.cheddar_id,
+                &self.cheddar,
                 ONE_YOCTO,
                 GAS_FOR_FT_TRANSFER,
             );
@@ -311,7 +327,7 @@ impl Contract {
 
     #[private]
     pub fn mint_callback(&mut self, user: AccountId, amount: U128, close: bool) {
-        env_log!(
+        log!(
             "mint_callback, env::promise_results_count()={}",
             env::promise_results_count()
         );
@@ -326,7 +342,7 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                env_log!("cheddar rewards withdrew {}", amount.0);
+                log!("cheddar rewards withdrew {}", amount.0);
                 self.total_rewards += amount.0;
                 if close {
                     // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
@@ -363,7 +379,7 @@ impl Contract {
     /// If now < start  return 0.
     /// If now == start return 1.
     /// if now == start + ROUND return 2...
-    pub fn current_round(&self) -> usize {
+    fn current_round(&self) -> usize {
         let mut now = env::block_timestamp() / SECOND;
         if now > self.farming_start {
             return 0;
@@ -386,14 +402,14 @@ impl Contract {
             &user,
             &Vault {
                 // warning: previous can be set in the future
-                previous: self.current_round(),
+                s: self.current_round(),
                 staked,
                 rewards: 0,
             },
         );
     }
 
-    fn assert_owner_calling(&self) {
+    fn assert_owner(&self) {
         assert!(
             env::predecessor_account_id() == self.owner_id,
             "can only be called by the owner"
@@ -454,7 +470,7 @@ mod tests {
     #[should_panic(expected = "E01: min stake amount is 0.01 NEAR")]
     fn test_min_staking() {
         let (mut ctx, mut ctr) = setup_contract(1, 0, 1);
-        testing_env!(ctx.attached_deposit(MIN_BALANCE / 10).build());
+        testing_env!(ctx.attached_deposit(NEAR_BALANCE / 10).build());
         ctr.stake();
     }
 

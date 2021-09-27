@@ -11,10 +11,10 @@ pub const ONE_YOCTO: Balance = 1;
 /// one second in nanoseconds
 pub const SECOND: u64 = 1_000_000_000;
 /// round duration in nanoseconds
-pub const ROUND: u64 = SECOND * 3600 * 24; // 1 day
+pub const ROUND: u64 = SECOND * 60 * 10; // 10 minutes
 
 const MILLI_NEAR: Balance = 1000_000000_000000_000000; // 1e21
-pub const MIN_BALANCE: Balance = MILLI_NEAR * 50; // 0.05 NEAR
+pub const NEAR_BALANCE: Balance = MILLI_NEAR * 50; // 0.05 NEAR
 /// E24 is 1 in yocto
 pub const E24: Balance = MILLI_NEAR * 1_000;
 

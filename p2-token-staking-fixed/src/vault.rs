@@ -17,20 +17,35 @@ use crate::*;
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 #[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
-    // round when the last time ping was called
-    pub previous: usize,
-    /// amount of $near locked in this vault
+    /// Contract.s value when the last ping was called and rewards calculated
+    pub s: usize,
+    /// amount of staking token locked in this vault
     pub staked: Balance,
-    /// Amount of accumulated rewards from staking;
+    /// Amount of accumulated, not withdrawn rewards from staking;
     pub rewards: Balance,
 }
 
 impl Contract {
-    pub(crate) fn get_vault(&self) -> (AccountId, Vault) {
-        let a = env::predecessor_account_id();
-        let v = self.vaults.get(&a).expect(ERR10_NO_ACCOUNT);
-        (a, v)
+    #[inline]
+    pub(crate) fn get_vault_or_default(&self, account_id: &AccountId) -> Vault {
+        self.vaults.get(account_id).unwrap_or_default()
     }
+
+    #[inline]
+    pub(crate) fn get_vault(&self, account_id: &AccountId) -> Vault {
+        self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)
+    }
+
+    pub(crate) fn save_vault(&mut self, account: &AccountId, vault: &Vault) {
+        if vault.staked == 0 && vault.rewards == 0 {
+            // if the vault is empty, remove
+            self.vaults.remove(account);
+        } else {
+            // save
+            self.vaults.insert(account, vault);
+        }
+    }
+
     /**
     Update rewards for locked tokens in past epochs
     returns total account rewards
@@ -42,35 +57,34 @@ impl Contract {
         if r == 0 {
             return 0;
         }
-        let rate = big(self.rate) * big(v.staked);
-        while v.previous < r - 1 {
-            // we don't farm in the current round
-            let farmed = (rate / self.rounds[v.previous]).as_u128();
-            v.rewards += farmed;
-            println!(
-                "FARMING {},  round_staked={}, user={}",
-                farmed, self.rounds[v.previous], v.staked
-            );
-            v.previous += 1;
+        // vault initialization
+        if v.s == 0 {
+            v.s = self.s;
+            return 0;
         }
+
+        self.ping_s(r);
+        // ping in the same round
+        if v.s == self.s {
+            return 0;
+        }
+
+        let farmed = self.staked * (self.s - v.s);
+        v.rewards += farmed;
+        println!("FARMING {}, user={}", farmed, v.staked);
+
+        v.s = self.s;
         return v.rewards;
     }
 
-    pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {
-        let r = self.current_round();
-        // note: r==1 at start
-        self.rounds[r - 1] += amount;
-        self.ping(v);
-        v.staked += amount;
-    }
-
-    pub(crate) fn _unstake(&mut self, amount: Balance, v: &mut Vault) {
-        assert!(v.staked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
-        let r = self.current_round();
-        // note: r==1 at start
-        self.rounds[r - 1] -= amount;
-        self.ping(v);
-        v.staked -= amount;
+    /// updates the rewards accumulator
+    pub(crate) fn ping_s(&self, round: usize) {
+        // covers also when round == 0
+        if self.s_round == round {
+            return;
+        }
+        self.s += (round - self.s_round) * self.rate / self.t;
+        self.s_round = round;
     }
 }
 
@@ -91,16 +105,21 @@ impl FungibleTokenReceiver for Contract {
         msg: String,
     ) -> PromiseOrValue<U128> {
         let token = env::predecessor_account_id();
-        assert!(token == self.token_id, "Token not accepted");
-        let sender_id = AccountId::from(sender_id);
-        let mut v = self.vaults.get(&sender_id).expect(ERR10_NO_ACCOUNT);
+        assert!(
+            token == self.staking_token,
+            "Only {} token transfers are accepted",
+            self.staking_token
+        );
+        assert!(amount.0 > 0, "staked amount must be positive");
+        let sender_id: AccountId = sender_id.as_ref();
+        let mut v = self.get_vault(&sender_id);
 
-        let amount = amount.0;
-        // TODO: make sure we account it correctly
-        self._stake(amount, &mut v);
-
+        self.ping(&v);
+        v.staked += amount.0;
         self.vaults.insert(&sender_id, &v);
-        env_log!("Staked, {} {}", amount, token);
+        log!("Staked, {} {}", amount, token);
+
+        self.t += amount.0;
 
         return PromiseOrValue::Value(U128(0));
     }
@@ -127,13 +146,13 @@ impl StorageManagement for Contract {
             }
         } else {
             assert!(
-                amount >= MIN_BALANCE,
+                amount >= NEAR_BALANCE,
                 "{}",
                 "The attached deposit is less than the minimum storage balance"
             );
             self.create_account(&account_id, 0);
 
-            let refund = amount - MIN_BALANCE;
+            let refund = amount - NEAR_BALANCE;
             if refund > 0 {
                 Promise::new(env::predecessor_account_id()).transfer(refund);
             }
@@ -160,8 +179,8 @@ impl StorageManagement for Contract {
     /// Mix and min balance is always MIN_BALANCE.
     fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds {
-            min: MIN_BALANCE.into(),
-            max: Some(MIN_BALANCE.into()),
+            min: NEAR_BALANCE.into(),
+            max: Some(NEAR_BALANCE.into()),
         }
     }
 
@@ -178,7 +197,7 @@ impl StorageManagement for Contract {
 
 fn storage_balance() -> StorageBalance {
     StorageBalance {
-        total: MIN_BALANCE.into(),
+        total: NEAR_BALANCE.into(),
         available: U128::from(0),
     }
 }

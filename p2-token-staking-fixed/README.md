@@ -5,4 +5,9 @@ The P2-fixed farm allows to stake tokens and farm Cheddar. Constraints:
 * Cheddar is farmed per round. During each round we farm `total_cheddar/number_rounds`.
 * Each user, in each round will farm proportionally to the amount of staked tokens.
 
+The contract rewards algorithm is based on the ["Scalable Reward Distribution on the Ethereum
+Blockchain"](https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a40977462982470_scalable-reward-distribution-paper.pdf) algorithm.
+
 ## Parameters
+
+* Round duration: 10 minutes
