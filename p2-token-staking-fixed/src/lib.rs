@@ -97,7 +97,7 @@ impl Contract {
             staked_token: self.staking_token.clone(),
             farming_rate: self.rate.into(),
             round_len: ROUND,
-            is_open: self.is_active,
+            is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
             total_staked: self.t.into(),
