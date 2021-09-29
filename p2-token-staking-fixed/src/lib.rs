@@ -106,14 +106,15 @@ impl Contract {
 
     /// Returns amount of staked tokens, farmed CHEDDAR and the current round.
     // TODO: this should not be a mutable function
-    pub fn status(&mut self, account_id: AccountId) -> (U128, U128, u64) {
+    pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
         return match self.vaults.get(&account_id) {
-            Some(mut v) => (
-                v.staked.into(),
-                self.ping(&mut v).into(),
-                self.current_round(),
-            ),
+            Some(mut v) => {
+                let r = self.current_round();
+                let farmed = v.ping(self.computes_s(r), r).into();
+                (v.staked.into(), farmed, self.current_round())
+            }
             None => {
+                log!("account not registered");
                 let zero = U128::from(0);
                 return (zero, zero, 0);
             }
@@ -141,7 +142,7 @@ impl Contract {
             //unstake all => close -- simplify UI
             return self.close();
         }
-        self.ping(&mut v);
+        self.ping_all(&mut v);
         v.staked -= amount_u;
         self.t -= amount_u;
 
@@ -167,7 +168,7 @@ impl Contract {
         assert_one_yocto();
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
-        self.ping(&mut v);
+        self.ping_all(&mut v);
         log!("Closing {} account, farmed CHEDDAR: {}", &a, v.rewards);
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
@@ -192,7 +193,7 @@ impl Contract {
         self.assert_is_active();
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
-        self.ping(&mut v);
+        self.ping_all(&mut v);
         let rewards = v.rewards;
         // zero the rewards to block double-withdraw-cheddar
         v.rewards = 0;
@@ -224,7 +225,7 @@ impl Contract {
             user,
             amount,
             Some("unstaking".to_string()),
-            &self.cheddar,
+            &self.staking_token,
             1,
             GAS_FOR_FT_TRANSFER,
         );
@@ -361,12 +362,13 @@ impl Contract {
     /// if now == start + ROUND return 2...
     fn current_round(&self) -> u64 {
         let mut now = env::block_timestamp() / SECOND;
-        if now > self.farming_start {
+        if now < self.farming_start {
             return 0;
         }
         // we start rounds from 1
         let mut adjust = 1;
         if now >= self.farming_end {
+            log!("farming over");
             now = self.farming_end;
             // if at the end of farming we don't start a new round then we need to force a new round
             if now % ROUND != 0 {

@@ -25,6 +25,35 @@ pub struct Vault {
     pub rewards: Balance,
 }
 
+impl Vault {
+    /**
+    Update rewards for locked tokens in past epochs
+    returns total account rewards
+    Arguments:
+    `s`: Contract.s value
+    `round`: current round
+     */
+    pub fn ping(&mut self, s: u128, round: u64) -> u128 {
+        // note: the round counting stops at self.farming_end
+        log!("current round: {}, self.s={}, vault.s={}", round, s, self.s);
+        // if farming didn't start, ignore the rewards update
+        if round == 0 {
+            return 0;
+        }
+        // ping in the same round
+        if self.s == s {
+            return 0;
+        }
+
+        let farmed = self.staked * (s - self.s);
+        self.rewards += farmed;
+        println!("FARMING {}, user={}", farmed, self.staked);
+
+        self.s = s;
+        return self.rewards;
+    }
+}
+
 impl Contract {
     #[inline]
     pub(crate) fn get_vault_or_default(&self, account_id: &AccountId) -> Vault {
@@ -36,55 +65,29 @@ impl Contract {
         self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)
     }
 
-    pub(crate) fn save_vault(&mut self, account: &AccountId, vault: &Vault) {
-        if vault.staked == 0 && vault.rewards == 0 {
-            // if the vault is empty, remove
-            self.vaults.remove(account);
-        } else {
-            // save
-            self.vaults.insert(account, vault);
-        }
-    }
-
-    /**
-    Update rewards for locked tokens in past epochs
-    returns total account rewards
-     */
-    pub(crate) fn ping(&mut self, v: &mut Vault) -> u128 {
-        // note: the round counting stops at self.farming_end
+    pub(crate) fn ping_all(&mut self, v: &mut Vault) -> u128 {
         let r = self.current_round();
-        // if farming doesn't started, ignore the rewards update
-        if r == 0 {
-            return 0;
-        }
-        // vault initialization
-        if v.s == 0 {
-            v.s = self.s;
-            return 0;
-        }
-
         self.ping_s(r);
-        // ping in the same round
-        if v.s == self.s {
-            return 0;
-        }
-
-        let farmed = v.staked * (self.s - v.s);
-        v.rewards += farmed;
-        println!("FARMING {}, user={}", farmed, v.staked);
-
-        v.s = self.s;
-        return v.rewards;
+        v.ping(self.s, r)
     }
 
     /// updates the rewards accumulator
     pub(crate) fn ping_s(&mut self, round: u64) {
         // covers also when round == 0
-        if self.s_round == round {
+        if self.s_round == round || self.t == 0 {
             return;
         }
         self.s += u128::from(round - self.s_round) * self.rate / self.t;
         self.s_round = round;
+    }
+
+    /// computes the rewards accumulator
+    pub(crate) fn computes_s(&self, round: u64) -> u128 {
+        // covers also when round == 0
+        if self.s_round == round || self.t == 0 {
+            return self.s;
+        }
+        self.s + u128::from(round - self.s_round) * self.rate / self.t
     }
 }
 
@@ -115,12 +118,14 @@ impl FungibleTokenReceiver for Contract {
         let sender_id: &AccountId = sender_id.as_ref();
         let mut v = self.get_vault(sender_id);
 
-        self.ping(&mut v);
+        // firstly update the past rewards
+        self.ping_all(&mut v);
+
         v.staked += amount.0;
         self.vaults.insert(sender_id, &v);
         log!("Staked, {} {}", amount.0, token);
 
-        self.t += amount.0;
+        self.t += amount.0; // must be called after ping_s
 
         return PromiseOrValue::Value(U128(0));
     }
@@ -148,8 +153,8 @@ impl StorageManagement for Contract {
         } else {
             assert!(
                 amount >= NEAR_BALANCE,
-                "{}",
-                "The attached deposit is less than the minimum storage balance"
+                "The attached deposit is less than the minimum storage balance ({})",
+                NEAR_BALANCE
             );
             self.create_account(&account_id, 0);
 
