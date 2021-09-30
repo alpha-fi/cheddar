@@ -191,7 +191,6 @@ impl Contract {
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
-    /// Call `close` to remove the account and return all staked tokens.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
     #[payable]
@@ -376,7 +375,6 @@ impl Contract {
         // we start rounds from 1
         let mut adjust = 1;
         if now >= self.farming_end {
-            log!("farming over");
             now = self.farming_end;
             // if at the end of farming we don't start a new round then we need to force a new round
             if now % ROUND != 0 {
