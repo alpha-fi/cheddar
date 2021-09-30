@@ -39,9 +39,13 @@ pub struct ContractParams {
     pub farming_token: AccountId,
     pub staked_token: AccountId,
     pub farming_rate: U128,
-    pub round_len: u64,
     pub is_active: bool,
     pub farming_start: u64,
     pub farming_end: u64,
     pub total_staked: U128,
+    /// total farmed is total amount of tokens farmed (not necessary minted - which would be
+    /// total_harvested).
+    pub total_farmed: U128,
+    /// Number of accounts currently registered.
+    pub accounts_registered: u64,
 }

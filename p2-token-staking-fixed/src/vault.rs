@@ -14,7 +14,7 @@ use near_contract_standards::storage_management::{
 // use crate::util::*;
 use crate::*;
 
-#[derive(BorshSerialize, BorshDeserialize, Default)]
+#[derive(BorshSerialize, BorshDeserialize)]
 #[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
     /// Contract.s value when the last ping was called and rewards calculated
@@ -35,14 +35,20 @@ impl Vault {
      */
     pub fn ping(&mut self, s: u128, round: u64) -> u128 {
         // note: the round counting stops at self.farming_end
-        log!("current round: {}, self.s={}, vault.s={}", round, s, self.s);
+        log!(
+            "current round: {}, self.s={}, vault.s={}, previous_rewards={}",
+            round,
+            s,
+            self.s,
+            self.rewards
+        );
         // if farming didn't start, ignore the rewards update
         if round == 0 {
             return 0;
         }
         // ping in the same round
         if self.s == s {
-            return 0;
+            return self.rewards;
         }
 
         let farmed = self.staked * (s - self.s);
@@ -55,11 +61,6 @@ impl Vault {
 }
 
 impl Contract {
-    #[inline]
-    pub(crate) fn get_vault_or_default(&self, account_id: &AccountId) -> Vault {
-        self.vaults.get(account_id).unwrap_or_default()
-    }
-
     #[inline]
     pub(crate) fn get_vault(&self, account_id: &AccountId) -> Vault {
         self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)
@@ -82,7 +83,7 @@ impl Contract {
     }
 
     /// computes the rewards accumulator
-    pub(crate) fn computes_s(&self, round: u64) -> u128 {
+    pub(crate) fn compute_s(&self, round: u64) -> u128 {
         // covers also when round == 0
         if self.s_round == round || self.t == 0 {
             return self.s;
@@ -99,7 +100,7 @@ impl FungibleTokenReceiver for Contract {
     Callback on receiving tokens by this contract.
     Automatically stakes receiving tokens.
     Returns zero.
-    Panics when account is not registered or when receiving wrong token. */
+    Panics when account is not registered or when receiving a wrong token. */
     #[allow(unused_variables)]
     fn ft_on_transfer(
         &mut self,
@@ -121,10 +122,9 @@ impl FungibleTokenReceiver for Contract {
         // firstly update the past rewards
         self.ping_all(&mut v);
 
+        log!("Staked, {} {}", amount.0, token);
         v.staked += amount.0;
         self.vaults.insert(sender_id, &v);
-        log!("Staked, {} {}", amount.0, token);
-
         self.t += amount.0; // must be called after ping_s
 
         return PromiseOrValue::Value(U128(0));

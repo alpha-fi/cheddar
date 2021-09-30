@@ -91,7 +91,7 @@ impl Contract {
     }
 
     /// Returns amount of user staked NEAR, farmed CHEDDAR
-    /// and the current round.
+    /// and the current round (time when the round started).
     pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
         let mut v = self.get_vault_or_default(&account_id);
         return (

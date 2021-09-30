@@ -40,14 +40,17 @@ pub struct Contract {
     pub farming_start: u64,
     /// unix timestamp (seconds) when the farming ends (first time with no farming).
     pub farming_end: u64,
-    /// total number of farmed $CHEDDAR
-    pub total_rewards: u128,
-    /// rewards accumulator: running sum of staked rewards per token.
+    /// total number of harvested $CHEDDAR
+    pub total_harvested: u128,
+    /// rewards accumulator: running sum of staked rewards per token (equals to the total
+    /// number of farmed tokens).
     s: u128,
     /// round number when the s was previously updated.
     s_round: u64,
     /// total amount of currently staked tokens.
     t: u128,
+    /// total number of accounts currently registered.
+    pub accounts_registered: u64,
 }
 
 #[near_bindgen]
@@ -77,12 +80,13 @@ impl Contract {
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
             rate: reward_rate.0, //cheddar per round per near (round = 1 second)
-            total_rewards: 0,
+            total_harvested: 0,
             farming_start,
             farming_end,
             s: 0,
             s_round: 0,
             t: 0,
+            accounts_registered: 0,
         }
     }
 
@@ -91,30 +95,31 @@ impl Contract {
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
+        let r = self.current_round();
+        let s = self.compute_s(r);
         ContractParams {
             owner_id: self.owner_id.clone(),
             farming_token: self.cheddar.clone(),
             staked_token: self.staking_token.clone(),
             farming_rate: self.rate.into(),
-            round_len: ROUND,
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
             total_staked: self.t.into(),
+            total_farmed: s.into(),
+            accounts_registered: self.accounts_registered,
         }
     }
 
-    /// Returns amount of staked tokens, farmed CHEDDAR and the current round.
-    // TODO: this should not be a mutable function
+    /// Returns amount of staked tokens, farmed CHEDDAR and the timestamp of the current round.
     pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
         return match self.vaults.get(&account_id) {
             Some(mut v) => {
                 let r = self.current_round();
-                let farmed = v.ping(self.computes_s(r), r).into();
-                (v.staked.into(), farmed, self.current_round())
+                let farmed = v.ping(self.compute_s(r), r).into();
+                (v.staked.into(), farmed, self.farming_start + r * ROUND)
             }
             None => {
-                log!("account not registered");
                 let zero = U128::from(0);
                 return (zero, zero, 0);
             }
@@ -181,6 +186,7 @@ impl Contract {
 
         // We remove the vault but we will try to recover in a callback if a minting will fail.
         self.vaults.remove(&a);
+        self.accounts_registered -= 1;
         return self.mint_cheddar(&a, v.rewards.into(), v.staked.into());
     }
 
@@ -238,14 +244,6 @@ impl Contract {
 
             PromiseResult::Successful(_) => {
                 log!("tokens returned {}", amount.0);
-
-                // TODO
-                // if close {
-                //     // AUDIT: TODO: Should check that the vault doesn't have `.staked > 0`, because
-                //     //    in case of weird async race conditions, the vault might get new staked balance.
-                //     self.vaults.remove(&user);
-                //     env::log(b"account closed");
-                // }
             }
 
             PromiseResult::Failed => {
@@ -276,7 +274,7 @@ impl Contract {
     /// mint cheddar rewards for the user, maybe closes the account
     /// NOTE: the destination account must be registered on CHEDDAR first!
     fn mint_cheddar(&mut self, a: &AccountId, cheddar: U128, tokens: U128) -> Promise {
-        // TODO verify callback
+        // TODO: verify callback
         let mut p;
         if cheddar.0 != 0 {
             p = ext_ft::mint(
@@ -332,13 +330,23 @@ impl Contract {
 
             PromiseResult::Successful(_) => {
                 log!("cheddar rewards withdrew {}", amount.0);
-                self.total_rewards += amount.0;
+                self.total_harvested += amount.0;
             }
 
             PromiseResult::Failed => {
                 // mint failed, restore cheddar rewards
                 // If the vault was closed before by another TX, then we must recover the state
-                let mut v = self.get_vault_or_default(&user);
+                let mut v;
+                if let Some(v2) = self.vaults.get(&user) {
+                    v = v2;
+                } else {
+                    self.accounts_registered += 1;
+                    v = Vault {
+                        s: 0,
+                        staked: 0,
+                        rewards: 0,
+                    }
+                }
                 v.rewards += amount.0;
                 self.vaults.insert(&user, &v);
             }
@@ -389,6 +397,7 @@ impl Contract {
                 rewards: 0,
             },
         );
+        self.accounts_registered += 1;
     }
 
     fn assert_owner(&self) {
