@@ -41,7 +41,7 @@ STAKEING_TOKEN=abc.testnet
 
 4. Harvest rewards (if you like to get your CHEDDAR before the farm closes):
     ```
-    near call $FARM withdraw_crop '' --accountId me.testnet --depositYocto 1
+    near call $FARM withdraw_crop '' --accountId me.testnet
     ```
 
 5. Harvest all rewards and close the account (un-register) after the farm will close:

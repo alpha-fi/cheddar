@@ -65,9 +65,9 @@ impl Contract {
         owner_id: ValidAccountId,
         cheddar: ValidAccountId,
         staked_token: ValidAccountId,
-        reward_rate: U128,
         farming_start: u64,
         farming_end: u64,
+        reward_rate: U128,
     ) -> Self {
         assert!(
             farming_end > farming_start,
@@ -193,7 +193,6 @@ impl Contract {
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
-    #[payable]
     pub fn withdraw_crop(&mut self) -> Promise {
         self.assert_is_active();
         let a = env::predecessor_account_id();
