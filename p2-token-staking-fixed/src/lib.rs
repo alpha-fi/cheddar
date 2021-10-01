@@ -117,7 +117,9 @@ impl Contract {
             Some(mut v) => {
                 let r = self.current_round();
                 let farmed = v.ping(self.compute_s(r), r).into();
-                (v.staked.into(), farmed, self.farming_start + r * ROUND)
+                // round starts from 1 when now >= farming_start
+                let r0 = if r > 1 { r - 1 } else { 0 };
+                (v.staked.into(), farmed, self.farming_start + r0 * ROUND)
             }
             None => {
                 let zero = U128::from(0);
