@@ -203,7 +203,7 @@ impl Contract {
         let rewards = v.rewards;
         // zero the rewards to block double-withdraw-cheddar
         v.rewards = 0;
-        self.vaults.insert(&a.clone(), &v);
+        self.vaults.insert(&a, &v);
         return self.mint_cheddar(&a, rewards.into(), 0.into());
     }
 
@@ -271,15 +271,16 @@ impl Contract {
         }
     }
 
-    /// mint cheddar rewards for the user, maybe closes the account
+    /// mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
     /// NOTE: the destination account must be registered on CHEDDAR first!
-    fn mint_cheddar(&mut self, a: &AccountId, cheddar: U128, tokens: U128) -> Promise {
+    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) -> Promise {
         // TODO: verify callback
         let mut p;
-        if cheddar.0 != 0 {
-            p = ext_ft::mint(
-                a.clone().try_into().unwrap(),
-                cheddar,
+        if cheddar_amount.0 != 0 {
+            p = ext_ft::ft_mint(
+                a.clone(),
+                cheddar_amount,
+                Some("farming".to_string()),
                 &self.cheddar,
                 ONE_YOCTO,
                 GAS_FOR_FT_TRANSFER,
@@ -289,7 +290,7 @@ impl Contract {
             } else {
                 p = p.then(ext_self::mint_callback(
                     a.clone(),
-                    cheddar,
+                    cheddar_amount,
                     &env::current_account_id(),
                     0,
                     GAS_FOR_MINT_CALLBACK,

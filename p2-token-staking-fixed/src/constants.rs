@@ -19,3 +19,6 @@ pub const NEAR_BALANCE: Balance = MILLI_NEAR * 50; // 0.05 NEAR
 pub const E24: Balance = MILLI_NEAR * 1_000;
 
 pub const MAX_STAKE: Balance = E24 * 100_000;
+
+/// accumulator overflow, used to correctly update the self.s accumulator.
+pub const ACC_OVERFLOW: Balance = 10_000_000; // 1e7

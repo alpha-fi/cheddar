@@ -35,6 +35,7 @@ impl Vault {
      */
     pub fn ping(&mut self, s: u128, round: u64) -> u128 {
         // note: the round counting stops at self.farming_end
+        // TODO: remove the logs
         log!(
             "current round: {}, self.s={}, vault.s={}, previous_rewards={}",
             round,
@@ -51,7 +52,7 @@ impl Vault {
             return self.rewards;
         }
 
-        let farmed = self.staked * (s - self.s);
+        let farmed = self.staked * (s - self.s) / ACC_OVERFLOW;
         self.rewards += farmed;
         println!("FARMING {}, user={}", farmed, self.staked);
 
@@ -74,21 +75,23 @@ impl Contract {
 
     /// updates the rewards accumulator
     pub(crate) fn ping_s(&mut self, round: u64) {
-        // covers also when round == 0
-        if self.s_round == round || self.t == 0 {
+        let new_s = self.compute_s(round);
+        if new_s == self.s {
             return;
         }
-        self.s += u128::from(round - self.s_round) * self.rate / self.t;
+        self.s = new_s;
         self.s_round = round;
     }
 
-    /// computes the rewards accumulator
+    /// computes the rewards accumulator.
+    /// NOTE: the current, optimized algorithm will not farm anything if
+    ///   `self.rate * 1e6 / self.t < 1`
     pub(crate) fn compute_s(&self, round: u64) -> u128 {
         // covers also when round == 0
         if self.s_round == round || self.t == 0 {
             return self.s;
         }
-        self.s + u128::from(round - self.s_round) * self.rate / self.t
+        self.s + u128::from(round - self.s_round) * self.rate * ACC_OVERFLOW / self.t
     }
 }
 
