@@ -96,7 +96,6 @@ impl Contract {
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
         let r = self.current_round();
-        let s = self.compute_s(r);
         ContractParams {
             owner_id: self.owner_id.clone(),
             farming_token: self.cheddar.clone(),
@@ -106,7 +105,7 @@ impl Contract {
             farming_start: self.farming_start,
             farming_end: self.farming_end,
             total_staked: self.t.into(),
-            total_farmed: s.into(),
+            total_farmed: (u128::from(r) * self.rate).into(),
             accounts_registered: self.accounts_registered,
         }
     }
