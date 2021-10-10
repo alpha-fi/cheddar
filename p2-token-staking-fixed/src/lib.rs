@@ -254,6 +254,20 @@ impl Contract {
         self.is_active = is_open;
     }
 
+    // TODO: remove before mainnet
+    /// Opens or closes smart contract operations. When the contract is not active, it won't
+    /// reject every user call, until it will be open back again.
+    pub fn set_farming_end(&mut self, farming_end: u64) {
+        self.assert_owner();
+        self.farming_end = farming_end;
+    }
+
+    // TODO: remove before mainnet
+    pub fn set_reward_rate(&mut self, rate: U128) {
+        self.assert_owner();
+        self.rate = rate.into();
+    }
+
     /*****************
      * internal methods */
 
