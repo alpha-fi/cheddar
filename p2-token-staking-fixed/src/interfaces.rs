@@ -46,6 +46,7 @@ pub struct ContractParams {
     /// total farmed is total amount of tokens farmed (not necessary minted - which would be
     /// total_harvested).
     pub total_farmed: U128,
+    pub fee_rate: U128,
     /// Number of accounts currently registered.
     pub accounts_registered: u64,
 }

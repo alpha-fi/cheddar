@@ -5,7 +5,7 @@ pub const ERR03_STORAGE_DEP: &str = "E03: min storage deposit is 0.05 NEAR";
 
 // Token registration
 
-pub const ERR10_NO_ACCOUNT: &str = "E10: account not found";
+pub const ERR10_NO_ACCOUNT: &str = "E10: account not found. Register the account.";
 
 // Token Deposit errors //
 

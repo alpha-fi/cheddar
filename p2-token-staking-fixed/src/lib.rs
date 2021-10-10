@@ -51,6 +51,14 @@ pub struct Contract {
     t: u128,
     /// total number of accounts currently registered.
     pub accounts_registered: u64,
+    /// Free rate in basis points. The fee is charged from the user staked tokens
+    /// on withdraw. Example: if fee=2 and user withdraws 10000e24 staking tokens
+    /// then the protocol will charge 2e24 staking tokens.
+    pub fee_rate: u128,
+    /// amount of fee collected (in staking token).
+    pub fee_collected: u128,
+    /// Treasury address - a destination for the collected fees.
+    pub treasury: AccountId,
 }
 
 #[near_bindgen]
@@ -60,6 +68,7 @@ impl Contract {
     /// * `farming_start` & `farming_end` are unix timestamps (in seconds).
     /// * `reward_rate` is amount of yoctoCheddars per 1e24 staked tokens (usually tokens are
     ///    denominated in 1e24 on NEAR).
+    /// * `fee_rate`: the Contract.fee parameter (in basis points)
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -68,6 +77,8 @@ impl Contract {
         farming_start: u64,
         farming_end: u64,
         reward_rate: U128,
+        fee_rate: u32,
+        treasury: AccountId,
     ) -> Self {
         assert!(
             farming_end > farming_start,
@@ -87,6 +98,9 @@ impl Contract {
             s_round: 0,
             t: 0,
             accounts_registered: 0,
+            fee_rate: fee_rate.into(),
+            fee_collected: 0,
+            treasury,
         }
     }
 
@@ -106,6 +120,7 @@ impl Contract {
             farming_end: self.farming_end,
             total_staked: self.t.into(),
             total_farmed: (u128::from(r) * self.rate).into(),
+            fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
         }
     }
@@ -206,6 +221,29 @@ impl Contract {
         return self.mint_cheddar(&a, rewards.into(), 0.into());
     }
 
+    /// Returns the amount of collected fees which are not withdrawn yet.
+    pub fn get_collected_fee(&self) -> U128 {
+        self.fee_collected.into()
+    }
+
+    /// Withdraws all collected fee to the treasury.
+    /// Must make sure treasury is registered
+    /// Panics if the collected fees == 0.
+    pub fn withdraw_fee(&mut self) -> Promise {
+        assert!(self.fee_collected > 0, "zero collected fees");
+        log!("Withdrawing collected fee: {} tokens", self.fee_collected);
+        let fee = U128::from(self.fee_collected);
+        self.fee_collected = 0;
+        return ext_ft::ft_transfer(
+            self.treasury.clone(),
+            fee,
+            Some("fee withdraw".to_string()),
+            &self.staking_token,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        );
+    }
+
     // ******************* //
     // management          //
 
@@ -225,10 +263,12 @@ impl Contract {
 
     /// transfers staked tokens back to the user
     #[inline]
-    fn return_tokens(&self, user: AccountId, amount: U128) -> Promise {
+    fn return_tokens(&mut self, user: AccountId, amount: U128) -> Promise {
+        let fee = amount.0 * self.fee_rate / 10_000;
+        self.fee_collected += fee;
         return ext_ft::ft_transfer(
             user,
-            amount,
+            (amount.0 - fee).into(),
             Some("unstaking".to_string()),
             &self.staking_token,
             1,
@@ -257,9 +297,11 @@ impl Contract {
                         self.vaults.insert(&user, &v);
                     }
                     None => {
-                        // weird case - account was deleted in the meantime.
+                        // recovering from `unstake`
+                        // or a weird case after closing - account deleted in the meantime.
+                        // TODO: check if no attack possible here (user could drain the account if recovering it in aloop of transactions)
                         log!(
-                            "Account deleted, user {} funds ({} tokens) not recovered and account recreated.",
+                            "Recovering deleted {} account. {} tokens restored.",
                             &user,
                             amount.0
                         );
