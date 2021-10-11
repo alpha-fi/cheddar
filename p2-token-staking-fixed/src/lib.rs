@@ -148,11 +148,11 @@ impl Contract {
     /// Unstakes given amount of tokens and transfers it back to the user.
     /// If amount equals to the amount staked then we close the account.
     /// NOTE: account once closed must re-register to stake again.
-    /// Returns amount of staked tokens left after the call.
+    /// Returns amount of staked tokens left (still staked) after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet 2FA.
     #[payable]
-    pub fn unstake(&mut self, amount: U128) -> Promise {
+    pub fn unstake(&mut self, amount: U128) -> U128 {
         self.assert_is_active();
         assert_one_yocto();
         let amount_u = amount.0;
@@ -161,7 +161,8 @@ impl Contract {
         assert!(amount_u <= v.staked, "{}", ERR30_NOT_ENOUGH_STAKE);
         if amount_u == v.staked {
             //unstake all => close -- simplify UI
-            return self.close();
+            self.close();
+            return v.staked.into();
         }
         self.ping_all(&mut v);
         v.staked -= amount_u;
@@ -175,7 +176,8 @@ impl Contract {
                 &env::current_account_id(),
                 0,
                 GAS_FOR_MINT_CALLBACK,
-            ))
+            ));
+        return v.staked.into();
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
