@@ -1,7 +1,7 @@
-# Callback sequences
+# Callback sequences / rollbacks check
 
-#### fn return_tokens => fn return_tokens_callback
-
+#### fn return_tokens => fn return_tokens_callback (OK)
+```
         self.return_tokens(a.clone(), amount)
             .then(ext_self::return_tokens_callback(
                 a,
@@ -32,12 +32,16 @@
    
       verifies ft_transfer result
       in case of failure, restore token amount to user vault
+```
 
 
-#### fn mint_cheddar - does harvest and maybe close account
-
-   Note: callers of fn mint_cheddar MUST set rewards to zero in the vault, because in case of failure the callbacks will re-add rewards to the vault
-   Recommendation 1: change the arguments to u128 instead of U128: `fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: u128, tokens: u128)`
+#### fn mint_cheddar - does harvest and maybe close account (PROBLEM)
+```
+   Note: callers of fn mint_cheddar MUST set rewards to zero in the vault, 
+   because in case of failure the callbacks will re-add rewards to the vault
+   
+   Recommendation 1: change the arguments to u128 instead of U128: 
+     `fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: u128, tokens: u128)`
 
    fn mint_cheddar(&mut self, a: &AccountId, cheddar: U128, tokens: U128) -> Promise {
 
@@ -68,30 +72,36 @@
 
    finally, to the previously scheduled async calls, 
    add a .then callback to fn mint_callback_finally
-
+```
 ##### fn mint_callback
-
+```
       verifies cheddar mint result
       in case of failure, restore cheddar-rewards amount to user vault
-
+```
 ##### fn mint_callback_finally
-
+```
       verifies rewards were really minted for the user
       and if not, panics, so the user receives the correct error message.
+
       Why panic?: Given that ft_mint is an async call 
       if the call fails, the rewards are correctly restored
       but the user (front-end) do not receive an error message because 
       the main call was successful. We need to add the panic! so the user
       is informed that the harvesting failed
-
-#### Problems:
+```
+#### Problems with fn mint_cheddar:
 * if cheddar_to_mint!=0 && tokens_to_return!=0, 
   * the callback `self.mint_callback` is not being scheduled
   * the callback `return_tokens_callback` is not being scheduled
 
-Note: this problem only presents itself in unhappy paths (failure in the execution of the async calls), 
-because the rollback callback is not being scheduled.
+Note: the problem will only appear in unhappy paths (failure in the execution of the async calls), 
+because the rollback callbacks are not being scheduled.
 
 #### Solutions to test
-* Solution A) Check if we can create two promises, each one with its own .then callback, and at the end combine both with and
-* Solution B) Try chaining all promises as .then(), so first cheddar is harvested then the tokens returned
+* Solution A) 
+
+Check if we can create two promises, each one with its own .then callback, and at the end combine both with "and"
+
+* Solution B) 
+
+Try chaining all promises as .then(), so first the tokens are returned and then cheddar is harvested 
