@@ -330,6 +330,9 @@ impl Contract {
 
     /// mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
     /// NOTE: the destination account must be registered on CHEDDAR first!
+    /// NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the call, because in case of failure the callbacks will re-add rewards to the vault
+    // CODE REVIEW: Recommendation: change the arguments to u128 instead of U128: `fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: u128, tokens: u128)`
+    //
     fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) -> Promise {
         // TODO: verify callback
         let mut p;
