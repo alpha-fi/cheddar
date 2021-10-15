@@ -35,14 +35,6 @@ impl Vault {
      */
     pub fn ping(&mut self, s: u128, round: u64) -> u128 {
         // note: the round counting stops at self.farming_end
-        // TODO: remove the logs
-        log!(
-            "current round: {}, self.s={}, vault.s={}, previous_rewards={}",
-            round,
-            s,
-            self.s,
-            self.rewards
-        );
         // if farming didn't start, ignore the rewards update
         if round == 0 {
             return 0;
@@ -54,7 +46,6 @@ impl Vault {
 
         let farmed = self.staked * (s - self.s) / ACC_OVERFLOW;
         self.rewards += farmed;
-        println!("FARMING {}, user={}", farmed, self.staked);
 
         self.s = s;
         return self.rewards;
