@@ -75,11 +75,7 @@ impl Contract {
 
     /// updates the rewards accumulator
     pub(crate) fn ping_s(&mut self, round: u64) {
-        let new_s = self.compute_s(round);
-        if new_s == self.s {
-            return;
-        }
-        self.s = new_s;
+        self.s = self.compute_s(round);
         self.s_round = round;
     }
 

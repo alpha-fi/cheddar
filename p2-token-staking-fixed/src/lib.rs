@@ -169,14 +169,7 @@ impl Contract {
         self.t -= amount_u;
 
         self.vaults.insert(&a, &v);
-        self.return_tokens(a.clone(), amount)
-            .then(ext_self::return_tokens_callback(
-                a,
-                amount,
-                &env::current_account_id(),
-                0,
-                GAS_FOR_MINT_CALLBACK,
-            ));
+        self.return_tokens(a, amount);
         return v.staked.into();
     }
 
@@ -186,7 +179,7 @@ impl Contract {
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
-    pub fn close(&mut self) -> Promise {
+    pub fn close(&mut self) {
         self.assert_is_active();
         assert_one_yocto();
         let a = env::predecessor_account_id();
@@ -197,7 +190,8 @@ impl Contract {
         // and remove the account and return storage deposit.
         if v.staked == 0 && v.rewards == 0 {
             self.vaults.remove(&a);
-            return Promise::new(a.clone()).transfer(NEAR_BALANCE);
+            Promise::new(a.clone()).transfer(NEAR_BALANCE);
+            return;
         }
 
         self.t -= v.staked;
@@ -205,13 +199,13 @@ impl Contract {
         // We remove the vault but we will try to recover in a callback if a minting will fail.
         self.vaults.remove(&a);
         self.accounts_registered -= 1;
-        return self.mint_cheddar(&a, v.rewards.into(), v.staked.into());
+        self.mint_cheddar(&a, v.rewards.into(), v.staked.into());
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
     /// Return amount of farmed CHEDDAR.
     /// Panics if user has not staked anything.
-    pub fn withdraw_crop(&mut self) -> Promise {
+    pub fn withdraw_crop(&mut self) {
         self.assert_is_active();
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
@@ -220,7 +214,7 @@ impl Contract {
         // zero the rewards to block double-withdraw-cheddar
         v.rewards = 0;
         self.vaults.insert(&a, &v);
-        return self.mint_cheddar(&a, rewards.into(), 0.into());
+        self.mint_cheddar(&a, rewards.into(), 0.into());
     }
 
     /// Returns the amount of collected fees which are not withdrawn yet.
@@ -283,13 +277,20 @@ impl Contract {
         let fee = amount.0 * self.fee_rate / 10_000;
         self.fee_collected += fee;
         return ext_ft::ft_transfer(
-            user,
+            user.clone(),
             (amount.0 - fee).into(),
             Some("unstaking".to_string()),
             &self.staking_token,
             1,
             GAS_FOR_FT_TRANSFER,
-        );
+        )
+        .then(ext_self::return_tokens_callback(
+            user,
+            amount,
+            &env::current_account_id(),
+            0,
+            GAS_FOR_MINT_CALLBACK,
+        ));
     }
 
     #[private]
@@ -306,24 +307,7 @@ impl Contract {
                     "token transfer failed {}. recovering account state",
                     amount.0
                 );
-                // returning tokens failed, restore account state
-                match self.vaults.get(&user) {
-                    Some(mut v) => {
-                        v.staked += amount.0;
-                        self.vaults.insert(&user, &v);
-                    }
-                    None => {
-                        // recovering from `unstake`
-                        // or a weird case after closing - account deleted in the meantime.
-                        // TODO: check if no attack possible here (user could drain the account if recovering it in aloop of transactions)
-                        log!(
-                            "Recovering deleted {} account. {} tokens restored.",
-                            &user,
-                            amount.0
-                        );
-                        self.create_account(&user, amount.0);
-                    }
-                }
+                self.recover_state(&user, 0, amount.0);
             }
         }
     }
@@ -331,52 +315,46 @@ impl Contract {
     /// mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
     /// NOTE: the destination account must be registered on CHEDDAR first!
     /// NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the call, because in case of failure the callbacks will re-add rewards to the vault
-    // CODE REVIEW: Recommendation: change the arguments to u128 instead of U128: `fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: u128, tokens: u128)`
-    //
-    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) -> Promise {
-        // TODO: verify callback
-        let mut p;
+    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) {
+        if cheddar_amount.0 == 0 && tokens.0 == 0 {
+            // nothing to mint nor return.
+            return;
+        }
+        // TODO: verify callbacks
+        let mut p: Option<Promise> = None;
         if cheddar_amount.0 != 0 {
-            p = ext_ft::ft_mint(
-                a.clone(),
-                cheddar_amount,
-                Some("farming".to_string()),
-                &self.cheddar,
-                ONE_YOCTO,
-                GAS_FOR_FT_TRANSFER,
-            );
-            if tokens.0 != 0 {
-                p = p.and(self.return_tokens(a.clone(), tokens));
-            } else {
-                p = p.then(ext_self::mint_callback(
+            p = Some(
+                ext_ft::ft_mint(
+                    a.clone(),
+                    cheddar_amount,
+                    Some("farming".to_string()),
+                    &self.cheddar,
+                    ONE_YOCTO,
+                    GAS_FOR_FT_TRANSFER,
+                )
+                .then(ext_self::mint_callback(
                     a.clone(),
                     cheddar_amount,
                     &env::current_account_id(),
                     0,
                     GAS_FOR_MINT_CALLBACK,
-                ));
-            }
-        } else if tokens.0 != 0 {
-            p = self.return_tokens(a.clone(), tokens.clone()).then(
-                ext_self::return_tokens_callback(
-                    a.clone(),
-                    tokens,
-                    &env::current_account_id(),
-                    0,
-                    GAS_FOR_MINT_CALLBACK,
-                ),
+                )),
             );
-        } else {
-            // nothing to mint nor return.
-            return Promise::new(a.clone());
         }
-
-        p.then(ext_self::mint_callback_finally(
-            a.clone(),
-            &env::current_account_id(),
-            0,
-            GAS_FOR_MINT_CALLBACK_FINALLY,
-        ))
+        if tokens.0 != 0 {
+            let p_return = self.return_tokens(a.clone(), tokens.clone());
+            if let Some(p_mint) = p {
+                p = Some(p_mint.and(p_return));
+            } else {
+                p = Some(p_return);
+            }
+        }
+        let _p = p.unwrap();
+        // return p.then(ext_self::mint_callback_finally(
+        //     &env::current_account_id(),
+        //     0,
+        //     GAS_FOR_MINT_CALLBACK_FINALLY,
+        // ));
     }
 
     #[private]
@@ -388,41 +366,43 @@ impl Contract {
         );
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
-
             PromiseResult::Successful(_) => {
                 log!("cheddar rewards withdrew {}", amount.0);
                 self.total_harvested += amount.0;
             }
-
             PromiseResult::Failed => {
-                // mint failed, restore cheddar rewards
-                // If the vault was closed before by another TX, then we must recover the state
-                let mut v;
-                if let Some(v2) = self.vaults.get(&user) {
-                    v = v2;
-                } else {
-                    self.accounts_registered += 1;
-                    v = Vault {
-                        s: 0,
-                        staked: 0,
-                        rewards: 0,
-                    }
-                }
-                v.rewards += amount.0;
-                self.vaults.insert(&user, &v);
+                log!("cheddar mint failed {}. recovering account state", amount.0);
+                self.recover_state(&user, amount.0, 0);
             }
         }
     }
 
-    #[private]
-    pub fn mint_callback_finally(&mut self, user: &AccountId) {
-        //Check if rewards were withdrew
-        if let Some(v) = self.vaults.get(&user) {
-            if v.rewards != 0 {
-                //if there are cheddar rewards, means the cheddar transfer failed
-                panic!("{}", "cheddar transfer failed");
+    fn recover_state(&mut self, user: &AccountId, cheddar: u128, staked: u128) {
+        let mut v;
+        if let Some(v2) = self.vaults.get(&user) {
+            v = v2;
+            v.staked += staked;
+            v.rewards += cheddar;
+        } else {
+            // If the vault was closed before by another TX, then we must recover the state
+            self.accounts_registered += 1;
+            v = Vault {
+                s: self.s,
+                staked,
+                rewards: cheddar,
             }
         }
+
+        self.vaults.insert(user, &v);
+    }
+
+    #[private]
+    pub fn mint_callback_finally(&mut self) {
+        // TODO: we should collect the values, beacuse the acocunt may exist if we mint
+        // cheddar but the user continues to stake (eg with `withdraw_crop`)
+
+        // TODO: return NEAR
+        // Promise::new(a.clone()).transfer(NEAR_BALANCE);
     }
 
     /// Returns the round number since `start`.

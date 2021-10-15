@@ -24,7 +24,7 @@ pub trait StakingPool {
 pub trait ExtSelf {
     fn return_tokens_callback(&mut self, user: AccountId, amount: U128);
     fn mint_callback(&mut self, user: AccountId, amount: U128);
-    fn mint_callback_finally(&mut self, user: AccountId);
+    fn mint_callback_finally(&mut self);
 }
 
 #[ext_contract(ext_ft)]
