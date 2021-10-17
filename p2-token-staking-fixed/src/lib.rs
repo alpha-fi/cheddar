@@ -78,7 +78,7 @@ impl Contract {
         farming_end: u64,
         reward_rate: U128,
         fee_rate: u32,
-        treasury: AccountId,
+        treasury: ValidAccountId,
     ) -> Self {
         assert!(
             farming_end > farming_start,
@@ -100,7 +100,7 @@ impl Contract {
             accounts_registered: 0,
             fee_rate: fee_rate.into(),
             fee_collected: 0,
-            treasury,
+            treasury: treasury.into(),
         }
     }
 
@@ -383,8 +383,10 @@ impl Contract {
 
     #[private]
     pub fn mint_callback_finally(&mut self) {
-        // TODO: we should collect the values, beacuse the acocunt may exist if we mint
-        // cheddar but the user continues to stake (eg with `withdraw_crop`)
+        // TODO:
+        // previously we were using a hack: checking if user account exists.
+        // We should collect the values from other callbacks, beacuse the acocunt may
+        // exist if we mint cheddar but the user continues to stake (eg with `withdraw_crop`)
 
         // TODO: return NEAR
         // Promise::new(a.clone()).transfer(NEAR_BALANCE);
@@ -445,9 +447,10 @@ mod tests {
 
     /// deposit_dec = size of deposit in e24
     fn setup_contract(
-        account_id: usize,
+        predecessor_idx: usize,
         deposit_dec: u128,
         round: u64,
+        reward_rate: u32,
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
@@ -455,12 +458,14 @@ mod tests {
             accounts(0),
             "cheddar".to_string().try_into().unwrap(),
             b"atom".try_into().unwrap(),
-            120.into(),
-            10,
-            20,
+            10 * ROUND, // farming_start
+            20 * ROUND,
+            (12 * E24).into(), // reward rate
+            reward_rate,
+            accounts(1),
         );
         testing_env!(context
-            .predecessor_account_id(accounts(account_id))
+            .predecessor_account_id(accounts(predecessor_idx))
             .attached_deposit((deposit_dec * E24).into())
             .block_timestamp(round * ROUND)
             .build());
