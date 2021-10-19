@@ -66,8 +66,13 @@ impl Contract {
 
     /// updates the rewards accumulator
     pub(crate) fn ping_s(&mut self, round: u64) {
-        self.s = self.compute_s(round);
-        self.s_round = round;
+        let new_s = self.compute_s(round);
+        // we should advance with rounds if self.t is zero, otherwise we have a jump and
+        // not properly compute the accumulator.
+        if self.t == 0 || new_s != self.s {
+            self.s = new_s;
+            self.s_round = round;
+        }
     }
 
     /// computes the rewards accumulator.
@@ -163,7 +168,7 @@ impl StorageManagement for Contract {
         panic!("Storage withdraw not possible, close the account instead");
     }
 
-    /// When force == true to close the account. Otherwise this is noop.
+    /// When force == true it will close the account. Otherwise this is noop.
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
         self.assert_is_active();
         if Some(true) == force {
