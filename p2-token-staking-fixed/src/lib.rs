@@ -394,20 +394,20 @@ impl Contract {
 
     /// Returns the round number since `start`.
     /// If now < start  return 0.
-    /// If now == start return 1.
-    /// if now == start + ROUND return 2...
+    /// If now == start return 0.
+    /// if now == start + ROUND return 1...
     fn current_round(&self) -> u64 {
         let mut now = env::block_timestamp() / SECOND;
         if now < self.farming_start {
             return 0;
         }
-        // we start rounds from 1
-        let mut adjust = 1;
+        // we start rounds from 0
+        let mut adjust = 0;
         if now >= self.farming_end {
             now = self.farming_end;
             // if at the end of farming we don't start a new round then we need to force a new round
             if now % ROUND != 0 {
-                adjust = 2
+                adjust = 1
             };
         }
         let r: u64 = ((now - self.farming_start) / ROUND).try_into().unwrap();
@@ -438,43 +438,79 @@ impl Contract {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[allow(unused_imports)]
 mod tests {
+    use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
+    use near_contract_standards::storage_management::StorageManagement;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
-    use near_sdk::MockedBlockchain;
     use near_sdk::{testing_env, Balance};
+    use near_sdk::{MockedBlockchain, ValidatorId};
     use std::convert::TryInto;
 
     use super::*;
 
+    fn acc_cheddar() -> ValidAccountId {
+        "cheddar".to_string().try_into().unwrap()
+    }
+
+    fn acc_staking() -> ValidAccountId {
+        "atom".try_into().unwrap()
+    }
+
+    fn acc_user1() -> ValidAccountId {
+        "user1".try_into().unwrap()
+    }
+
+    fn acc_user2() -> ValidAccountId {
+        "user2".try_into().unwrap()
+    }
+
+    const BLOCK_ROUND: u64 = ROUND * SECOND;
+    const RATE: u128 = 12 * E24;
     /// deposit_dec = size of deposit in e24
     fn setup_contract(
-        predecessor_idx: usize,
+        predecessor: ValidAccountId,
         deposit_dec: u128,
         round: u64,
-        reward_rate: u32,
+        fee_rate: u32,
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
         let contract = Contract::new(
-            accounts(0),
-            "cheddar".to_string().try_into().unwrap(),
-            b"atom".try_into().unwrap(),
+            accounts(0), // owner
+            acc_cheddar(),
+            acc_staking(),
             10 * ROUND, // farming_start
             20 * ROUND,
-            (12 * E24).into(), // reward rate
-            reward_rate,
+            RATE.into(), // reward rate
+            fee_rate,
             accounts(1),
         );
         testing_env!(context
-            .predecessor_account_id(accounts(predecessor_idx))
+            .predecessor_account_id(predecessor)
             .attached_deposit((deposit_dec * E24).into())
-            .block_timestamp(round * ROUND)
+            .block_timestamp(round * BLOCK_ROUND)
             .build());
         (context, contract)
     }
 
+    /// epoch is a timer in rounds (rather than miliseconds)
+    fn stake(
+        ctx: &mut VMContextBuilder,
+        ctr: &mut Contract,
+        a: &ValidAccountId,
+        amount: u128,
+        epoch: u64,
+    ) {
+        testing_env!(ctx
+            .attached_deposit(0)
+            .predecessor_account_id(acc_staking())
+            .block_timestamp(epoch * BLOCK_ROUND)
+            .build());
+        ctr.ft_on_transfer(a.clone(), amount.into(), "transfer to farm".to_string());
+    }
+
     #[test]
     fn test_set_active() {
-        let (_, mut ctr) = setup_contract(0, 5, 1);
+        let (_, mut ctr) = setup_contract(accounts(0), 5, 1, 0);
         assert_eq!(ctr.is_active, true);
         ctr.set_active(false);
         assert_eq!(ctr.is_active, false);
@@ -483,166 +519,245 @@ mod tests {
     #[test]
     #[should_panic(expected = "can only be called by the owner")]
     fn test_set_active_not_admin() {
-        let (_, mut ctr) = setup_contract(1, 0, 1);
+        let (_, mut ctr) = setup_contract(accounts(1), 0, 1, 0);
         ctr.set_active(false);
     }
 
     #[test]
-    #[should_panic(expected = "E01: min stake amount is 0.01 NEAR")]
-    fn test_min_staking() {
-        let (mut ctx, mut ctr) = setup_contract(1, 0, 1);
-        testing_env!(ctx.attached_deposit(NEAR_BALANCE / 10).build());
-        ctr.stake();
+    #[should_panic(
+        expected = "The attached deposit is less than the minimum storage balance (50000000000000000000000)"
+    )]
+    fn test_min_storage_deposit() {
+        let (mut ctx, mut ctr) = setup_contract(acc_user1(), 0, 1, 0);
+        testing_env!(ctx.attached_deposit(NEAR_BALANCE / 4).build());
+        ctr.storage_deposit(None, None);
+    }
+
+    #[test]
+    fn test_storage_deposit() {
+        let user = acc_user1();
+        let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
+
+        match ctr.storage_balance_of(user.clone()) {
+            Some(_) => panic!("unregistered account must not have a balance"),
+            _ => {}
+        };
+
+        testing_env!(ctx.attached_deposit(NEAR_BALANCE).build());
+        ctr.storage_deposit(None, None);
+        match ctr.storage_balance_of(user) {
+            None => panic!("user account should be registered"),
+            Some(s) => {
+                assert_eq!(s.available.0, 0, "availabe should be 0");
+                assert_eq!(
+                    s.total.0, NEAR_BALANCE,
+                    "total user storage deposit should be correct"
+                );
+            }
+        }
     }
 
     #[test]
     fn test_staking() {
-        let (mut ctx, mut ctr) = setup_contract(1, 10, 1);
-        assert_eq!(
-            ctr.total_stake, 0,
-            "at the beginning there should be 0 total stake"
-        );
+        let user = acc_user1();
+        let user_a: AccountId = user.clone().into();
+        let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
+        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
 
-        ctr.stake();
+        // register an account
+        testing_env!(ctx.attached_deposit(NEAR_BALANCE).build());
+        ctr.storage_deposit(None, None);
 
-        // status returns (account_stake, account_rewards)
-        let (a1_s, a1_r, _) = ctr.status(get_acc(0));
+        // ------------------------------------------------
+        // stake before farming_start
+        stake(&mut ctx, &mut ctr, &user, E24, 1);
+        let (a1_s, a1_r, _) = ctr.status(get_acc(2)); // returns (stake, rewards, round)
         assert_eq!(a1_s.0, 0, "account0 didn't stake");
         assert_eq!(a1_r.0, 0, "account0 didn't stake so no cheddar");
 
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 10 * E24, "account1 staked");
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, E24, "user stake");
+        assert_eq!(ctr.t, a1_s.0, "total stake should equal to account1 stake");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
+
+        // ------------------------------------------------
+        // stake one more time before farming_start
+        stake(&mut ctx, &mut ctr, &user, 3 * E24, 2);
+
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 4 * E24, "user stake increased");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
+        assert_eq!(ctr.t, a1_s.0, "total stake should equal to the user stake");
+
+        // ------------------------------------------------
+        // Staking before the beginning won't yield rewards
+        testing_env!(ctx.block_timestamp(10 * BLOCK_ROUND - 1).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
+
+        // ------------------------------------------------
+        // The first round already reward - a whole epoch needs to pass first
+        testing_env!(ctx.block_timestamp(10 * BLOCK_ROUND + 1).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
         assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to account1 stake"
+            a1_r.0, 0,
+            "no cheddar should be rewarded during the first round"
         );
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-
-        // ------------------------------------------------
-        // stake before the farming_start
-
-        testing_env!(ctx
-            .attached_deposit(10 * E24)
-            .block_timestamp(2 * ROUND)
-            .build());
-        ctr.stake();
-
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake increased");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to account1 stake"
-        );
-
-        // ------------------------------------------------
-        // at the start we still shouldn't get any reward.
-
-        testing_env!(ctx.block_timestamp(10 * ROUND + 1).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake increased");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-
-        // ------------------------------------------------
-        // Staking at the very beginning wont yield rewards - a whole epoch needs to pass first
-
-        testing_env!(ctx.block_timestamp(10 * ROUND).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
         // WE are alone - we should get 100% of emission.
 
-        testing_env!(ctx.block_timestamp(11 * ROUND).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 2400, "we take all harvest");
+        testing_env!(ctx.block_timestamp(12 * BLOCK_ROUND).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 2 * RATE, "we take all harvest");
 
         // ------------------------------------------------
         // second check in same epoch shouldn't change rewards
-
-        testing_env!(ctx.block_timestamp(11 * ROUND + 100).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
+        testing_env!(ctx.block_timestamp(12 * BLOCK_ROUND + 100).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
         assert_eq!(
-            a1_r.0, 2400,
+            a1_r.0,
+            2 * RATE,
             "in the same epoch we should harvest only once"
         );
 
         // ------------------------------------------------
-        // 2 epochs later we add another account to stake
-
-        testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .attached_deposit(a1_s.0) // let's stake the same amount.
-            .block_timestamp(13 * ROUND + 100)
-            .build());
-        ctr.stake();
-
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 120 * 20 * 3, "3rd round of account1 farming");
-
-        let (a2_s, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_s.0, 20 * E24, "account2 stake was set correctly");
+        // 2 epochs later user1 stake
+        stake(&mut ctx, &mut ctr, &user, a1_s.0, 13);
+        testing_env!(ctx.block_timestamp(13 * BLOCK_ROUND + 100).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
         assert_eq!(
-            a2_r.0, 0,
-            "account2 can only start farming in the next round"
+            a1_r.0,
+            3 * RATE,
+            "adding new stake shouldn't change issuance in 'self farmin' scenario"
         );
 
-        assert_eq!(a1_s.0 + a2_s.0, ctr.total_stake);
+        // ------------------------------------------------
+        // User who didn't stake should have zero rewards
+        let user2 = acc_user2();
+        let user2_a: AccountId = user2.clone().into();
+        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
+        assert_eq!(a2_s.0, 0, "account2 stake should be zero");
+        assert_eq!(a2_r.0, 0, "account2 rewards should be zero");
+
+        // ------------------------------------------------
+        // User2 joins, but his stake will only be taken into account for the next round.
+        // register an account
+        testing_env!(ctx
+            .attached_deposit(NEAR_BALANCE)
+            .predecessor_account_id(user2.clone())
+            .block_timestamp(14 * BLOCK_ROUND)
+            .build());
+        ctr.storage_deposit(None, None);
+
+        stake(&mut ctx, &mut ctr, &user2, 4 * E24, 14);
+        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
+        assert_eq!(a2_s.0, 4 * E24, "account2 stake should be updated");
+        assert_eq!(a2_r.0, 0, "account2 rewards should be still zero");
+
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 4 * RATE, "all rewards should still go to user1");
 
         // ------------------------------------------------
         // 1 epochs later account 2 should have farming reward
+        testing_env!(ctx.block_timestamp(15 * BLOCK_ROUND).build());
 
-        testing_env!(ctx.block_timestamp(14 * ROUND).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        assert_eq!(
+            a1_r.0,
+            4 * RATE + RATE * 2 / 3,
+            "5th round of account1 farming"
+        );
 
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 120 * 20 * 4, "4th round of account1 farming");
-
-        let (a2_s, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_s.0, 20 * E24, "account2 didn't change");
-        assert_eq!(a2_r.0, 120 * 20, "account2 first farming is correct");
-
-        // ------------------------------------------------
-        // go to end of farming, and try to stake - it shouldn't change anything.
-
-        testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .block_timestamp(20 * ROUND)
-            .build());
-        ctr.stake();
-
-        let (_, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_r.0, 120 * 20 * 10, "10th round of account1 farming");
-
-        let (_, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_r.0, 120 * 20 * 7, "6th round of account1 farming");
+        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
+        assert_eq!(a2_s.0, 4 * E24, "account2 didn't change");
+        assert_eq!(a2_r.0, RATE / 3, "account2 first farming is correct");
 
         // ------------------------------------------------
-        // try to stake - it shouldn't after the end of farming
+        // go to the last round of farming, and try to stake - it shouldn't change the rewards.
+        stake(&mut ctx, &mut ctr, &user2, 4 * E24, 20);
 
-        testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .block_timestamp(20 * ROUND)
-            .build());
-        ctr.stake();
-        let (_, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_r.0, 120 * 20 * 10, "after end of framing - no change");
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        assert_eq!(
+            a1_r.0,
+            4 * RATE + 6 * RATE * 2 / 3,
+            "last round of account1 farming"
+        );
 
-        let (_, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_r.0, 120 * 20 * 7, "after end of framing - no change");
+        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
+        assert_eq!(a2_s.0, 8 * E24, "account2 stake is updated");
+        assert_eq!(a2_r.0, 6 * RATE / 3, "account2 first farming is correct");
+
+        assert_eq!(
+            ctr.t,
+            a1_s.0 + a2_s.0,
+            "total stake should equal to sum of  user stake"
+        );
+
+        // ------------------------------------------------
+        // After farm end farming is disabled
+        testing_env!(ctx.block_timestamp(21 * BLOCK_ROUND + 100).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        assert_eq!(
+            a1_r.0,
+            4 * RATE + 6 * RATE * 2 / 3,
+            "last round of account1 farming"
+        );
+
+        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
+        assert_eq!(a2_s.0, 8 * E24, "account2 stake is updated");
+        assert_eq!(a2_r.0, 6 * RATE / 3, "account2 first farming is correct");
     }
 
     #[test]
-    fn test_staking_accumulate() {
-        let (mut ctx, mut ctr) = setup_contract(1, 100, 5);
+    fn test_staking_late() {
+        let user = acc_user1();
+        let user_a: AccountId = user.clone().into();
+        let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
+        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
+
+        // register an account
+        testing_env!(ctx
+            .attached_deposit(NEAR_BALANCE)
+            .block_timestamp(15 * ROUND)
+            .build());
+        ctr.storage_deposit(None, None);
+
+        stake(&mut ctx, &mut ctr, &user, E24, 15);
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, E24, "user stake");
+        assert_eq!(ctr.t, a1_s.0, "total stake should equal to account1 stake");
         assert_eq!(
-            ctr.total_stake, 0,
-            "at the beginning there should be 0 total stake"
+            a1_r.0, 0,
+            "no cheddar should be rewarded in a round when user joins the pool"
         );
+
+        // in a subsequent round we should farm!
+        testing_env!(ctx.block_timestamp(16 * BLOCK_ROUND + 100).build());
+        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
+        assert_eq!(a1_s.0, E24, "account1 stake didn't change");
+        assert_eq!(a1_r.0, RATE, "account1 farming");
+
+        assert_eq!(
+            ctr.t, a1_s.0,
+            "total stake should equal to the user  user stake"
+        );
+    }
+
+    /*
+    #[test]
+    fn test_staking_accumulate() {
+        let (mut ctx, mut ctr) = setup_contract(acc_user(), 100, 5, 0);
+        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
         ctr.stake();
 
         // ------------------------------------------------
@@ -650,31 +765,29 @@ mod tests {
         // NOTE: we start farming at round 10
 
         testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .block_timestamp(12 * ROUND)
+            .predecessor_account_id(acc_user())
+            .block_timestamp(12 * BLOCK_ROUND)
             .build());
         ctr.stake();
-        testing_env!(ctx.predecessor_account_id(accounts(2)).build());
+        testing_env!(ctx.predecessor_account_id(acc_user()).build());
         ctr.stake();
 
         // ------------------------------------------------
         // check the rewards at round 14
 
         testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .block_timestamp(14 * ROUND)
+            .predecessor_account_id(acc_user())
+            .block_timestamp(14 * BLOCK_ROUND)
             .build());
 
-        assert_eq!(
-            ctr.total_stake,
-            300 * E24,
-            "each account staked the same amount"
-        );
+        assert_eq!(ctr.t, 300 * E24, "each account staked the same amount");
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
         assert_eq!(a1_s.0, 100 * E24, "account1 stake is correct");
         assert_eq!(a1_r.0, 4 * 120 * 100, "account1 reward");
     }
+
+     */
 
     fn get_acc(idx: usize) -> AccountId {
         accounts(idx).as_ref().to_string()
