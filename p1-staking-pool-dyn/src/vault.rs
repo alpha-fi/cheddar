@@ -4,7 +4,6 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{AccountId, Balance};
 
 use crate::constants::*;
-use crate::errors::*;
 use crate::util::*;
 use crate::Contract;
 
@@ -88,19 +87,6 @@ impl Contract {
             v.previous = now;
         }
         return v.rewards;
-    }
-
-    pub(crate) fn _stake(&mut self, amount: Balance, v: &mut Vault) {
-        self.ping(v);
-        v.staked += amount;
-    }
-
-    pub(crate) fn _unstake(&mut self, amount: Balance, v: &mut Vault) {
-        assert!(v.staked >= amount, "{}", ERR30_NOT_ENOUGH_STAKE);
-        self.ping(v);
-        v.staked -= amount;
-
-        assert!(v.staked >= MIN_STAKE, "{}", ERR02_MIN_BALANCE);
     }
 }
 

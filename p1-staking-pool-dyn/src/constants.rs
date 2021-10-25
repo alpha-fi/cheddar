@@ -21,7 +21,7 @@ pub const ROUNDS_PER_MINUTE: u64 = 60; // 1 minute of rounds
 // AUDIT: fixed comment
 // 1/1_000 of a NEAR
 const MILLI_NEAR: Balance = 1000_000000_000000_000000;
-pub const MIN_STAKE: Balance = MILLI_NEAR * 10; // 0.01 NEAR
 pub const E24: Balance = MILLI_NEAR * 1_000;
+pub const STAKE: Balance = E24;
 
 pub const MAX_STAKE: Balance = E24 * 100_000;

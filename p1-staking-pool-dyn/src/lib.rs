@@ -7,8 +7,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
 use near_sdk::{
-    assert_one_yocto, env, log, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseOrValue,
-    PromiseResult,
+    assert_one_yocto, env, log, near_bindgen, AccountId, PanicOnDefault, Promise, PromiseResult,
 };
 
 pub mod constants;
@@ -114,49 +113,22 @@ impl Contract {
     pub fn stake(&mut self) -> U128 {
         self.assert_open();
         let amount = env::attached_deposit();
-        assert!(amount >= MIN_STAKE, "{}", ERR01_MIN_STAKE);
+        assert!(
+            amount == STAKE,
+            "Exactly 1 NEAR per account stake is expected"
+        );
         let aid = env::predecessor_account_id();
         self.total_stake += amount;
-        let mut vault = self.get_vault_or_default(&aid);
-        if vault.is_empty() {
-            // new account no need to ping & _stake
-            vault.staked += amount;
-            // warning: previous can be set in the future
-            vault.previous = cmp::max(current_round(), self.farming_start);
-        } else {
-            self._stake(amount, &mut vault);
+        if self.vaults.contains_key(&aid) {
+            panic!("You can't stake 2 times");
         }
-        // save vault
+        let vault = Vault {
+            staked: amount,
+            previous: cmp::max(current_round(), self.farming_start),
+            rewards: 0,
+        };
         self.save_vault(&aid, &vault);
         return vault.staked.into();
-    }
-
-    /// Unstakes given amount of $NEAR and transfers it back to the user. If the user leaves in
-    /// his deposit less than `MIN_STAKE` then we close his account.
-    /// Returns amount of staked tokens left after the call.
-    /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
-    /// Requires 1 yNEAR payment for wallet validation.
-    #[payable]
-    pub fn unstake(&mut self, amount: U128) -> PromiseOrValue<U128> {
-        assert_one_yocto();
-        let amount = u128::from(amount);
-        assert!(amount > 0, "Invalid amount");
-        let aid = env::predecessor_account_id();
-        let mut vault = self.get_vault_or_default(&aid);
-        assert!(
-            amount <= vault.staked,
-            "Invalid amount, you have not that much staked"
-        );
-        if vault.staked - amount <= MIN_STAKE {
-            // unstake all => close -- simplify UI
-            return PromiseOrValue::Promise(self.close());
-        }
-
-        self._unstake(amount, &mut vault);
-        self.total_stake -= amount;
-        self.save_vault(&aid, &vault);
-        Promise::new(aid).transfer(amount);
-        return PromiseOrValue::Value(amount.into());
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -396,21 +368,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "E01: min stake amount is 0.01 NEAR")]
-    fn test_min_staking() {
-        let (mut ctx, mut ctr) = setup_contract(1, 0, 1);
-        testing_env!(ctx.attached_deposit(MIN_STAKE / 10).build());
+    #[should_panic(expected = "Exactly 1 NEAR per account stake is expected")]
+    fn test_staking_too_small() {
+        let (mut ctx, mut ctr) = setup_contract(1, 1, 1);
+        testing_env!(ctx.attached_deposit(STAKE / 10).build());
+        ctr.stake();
+    }
+
+    #[test]
+    #[should_panic(expected = "Exactly 1 NEAR per account stake is expected")]
+    fn test_staking_too_big() {
+        let (_, mut ctr) = setup_contract(1, 2, 1);
         ctr.stake();
     }
 
     #[test]
     fn test_staking() {
-        let (mut ctx, mut ctr) = setup_contract(1, 10, 1);
+        let (mut ctx, mut ctr) = setup_contract(1, 1, 1);
         assert_eq!(
             ctr.total_stake, 0,
             "at the beginning there should be 0 total stake"
         );
 
+        // ------------------------------------------------
+        // stake before the farming_start
         ctr.stake();
 
         // status returns (account_stake, account_rewards)
@@ -419,7 +400,7 @@ mod tests {
         assert_eq!(a1_r.0, 0, "account0 didn't stake so no cheddar");
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 10 * E24, "account1 staked");
+        assert_eq!(a1_s.0, STAKE, "account1 staked");
         assert_eq!(
             ctr.total_stake, a1_s.0,
             "total stake should equal to account1 stake"
@@ -427,36 +408,11 @@ mod tests {
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
-        // stake before the farming_start
+        // during the first round we still shouldn't get any reward.
 
-        testing_env!(ctx
-            .attached_deposit(10 * E24)
-            .block_timestamp(2 * ROUND)
-            .build());
-        ctr.stake();
-
+        testing_env!(ctx.block_timestamp(10 * ROUND + ROUND / 2).build());
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake increased");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to account1 stake"
-        );
-
-        // ------------------------------------------------
-        // at the start we still shouldn't get any reward.
-
-        testing_env!(ctx.block_timestamp(10 * ROUND + 1).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake increased");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-
-        // ------------------------------------------------
-        // Staking at the very beginning wont yield rewards - a whole epoch needs to pass first
-
-        testing_env!(ctx.block_timestamp(10 * ROUND).build());
-        let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
+        assert_eq!(a1_s.0, STAKE, "account1 stake didn't change");
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
@@ -464,36 +420,32 @@ mod tests {
 
         testing_env!(ctx.block_timestamp(11 * ROUND).build());
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 2400, "we take all harvest");
+        assert_eq!(a1_s.0, STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 120, "we take all harvest");
 
         // ------------------------------------------------
         // second check in same epoch shouldn't change rewards
 
         testing_env!(ctx.block_timestamp(11 * ROUND + 100).build());
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(
-            a1_r.0, 2400,
-            "in the same epoch we should harvest only once"
-        );
+        assert_eq!(a1_s.0, STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 120, "in the same epoch we should harvest only once");
 
         // ------------------------------------------------
         // 2 epochs later we add another account to stake
 
         testing_env!(ctx
             .predecessor_account_id(accounts(2))
-            .attached_deposit(a1_s.0) // let's stake the same amount.
             .block_timestamp(13 * ROUND + 100)
             .build());
         ctr.stake();
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 120 * 20 * 3, "3rd round of account1 farming");
+        assert_eq!(a1_s.0, STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 120 * 3, "3rd round of account1 farming");
 
         let (a2_s, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_s.0, 20 * E24, "account2 stake was set correctly");
+        assert_eq!(a2_s.0, STAKE, "account2 stake was set correctly");
         assert_eq!(
             a2_r.0, 0,
             "account2 can only start farming in the next round"
@@ -507,41 +459,43 @@ mod tests {
         testing_env!(ctx.block_timestamp(14 * ROUND).build());
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 20 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 120 * 20 * 4, "4th round of account1 farming");
+        assert_eq!(a1_s.0, STAKE, "account1 stake didn't change");
+        assert_eq!(a1_r.0, 120 * 4, "4th round of account1 farming");
 
         let (a2_s, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_s.0, 20 * E24, "account2 didn't change");
-        assert_eq!(a2_r.0, 120 * 20, "account2 first farming is correct");
+        assert_eq!(a2_s.0, STAKE, "account2 didn't change");
+        assert_eq!(a2_r.0, 120, "account2 first farming is correct");
 
         // ------------------------------------------------
-        // go to end of farming, and try to stake - it shouldn't change anything.
+        // go to end of farming, and try to stake with other account
+        // - it shouldn't change anything.
 
         testing_env!(ctx
-            .predecessor_account_id(accounts(2))
+            .predecessor_account_id(accounts(3))
             .block_timestamp(20 * ROUND)
             .build());
         ctr.stake();
 
         let (_, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_r.0, 120 * 20 * 10, "10th round of account1 farming");
+        assert_eq!(a1_r.0, 120 * 10, "10th round of account1 farming");
 
         let (_, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_r.0, 120 * 20 * 7, "6th round of account1 farming");
+        assert_eq!(a2_r.0, 120 * 7, "6th round of account1 farming");
 
         // ------------------------------------------------
-        // try to stake - it shouldn't after the end of farming
+        // Move few blocks after the end of the farming, it shouldn't change anything
 
-        testing_env!(ctx
-            .predecessor_account_id(accounts(2))
-            .block_timestamp(20 * ROUND)
-            .build());
-        ctr.stake();
+        testing_env!(ctx.block_timestamp(30 * ROUND).build());
+
         let (_, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_r.0, 120 * 20 * 10, "after end of framing - no change");
+        assert_eq!(a1_r.0, 120 * 10, "no more farming");
 
         let (_, a2_r, _) = ctr.status(get_acc(2));
-        assert_eq!(a2_r.0, 120 * 20 * 7, "after end of framing - no change");
+        assert_eq!(a2_r.0, 120 * 7, "no more farming");
+
+        let (a3_s, a3_r, _) = ctr.status(get_acc(3));
+        assert_eq!(a3_s.0, STAKE, "account3 stake should be correct");
+        assert_eq!(a3_r.0, 0, "account3 should not farm anyting");
     }
 
     #[test]
@@ -551,6 +505,8 @@ mod tests {
             ctr.total_stake, 0,
             "at the beginning there should be 0 total stake"
         );
+        // this should work
+        testing_env!(ctx.attached_deposit(STAKE).build());
         ctr.stake();
 
         // ------------------------------------------------
@@ -562,7 +518,7 @@ mod tests {
             .block_timestamp(12 * ROUND)
             .build());
         ctr.stake();
-        testing_env!(ctx.predecessor_account_id(accounts(2)).build());
+        testing_env!(ctx.predecessor_account_id(accounts(3)).build());
         ctr.stake();
 
         // ------------------------------------------------
@@ -575,13 +531,13 @@ mod tests {
 
         assert_eq!(
             ctr.total_stake,
-            300 * E24,
+            3 * E24,
             "each account staked the same amount"
         );
 
         let (a1_s, a1_r, _) = ctr.status(get_acc(1));
-        assert_eq!(a1_s.0, 100 * E24, "account1 stake is correct");
-        assert_eq!(a1_r.0, 4 * 120 * 100, "account1 reward");
+        assert_eq!(a1_s.0, E24, "account1 stake is correct");
+        assert_eq!(a1_r.0, 4 * 120, "account1 reward");
     }
 
     fn get_acc(idx: usize) -> AccountId {
