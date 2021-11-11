@@ -137,7 +137,7 @@ impl Contract {
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
-    pub fn close(&mut self) -> Promise {
+    pub fn close(&mut self) {
         assert_one_yocto();
         let aid = env::predecessor_account_id();
         let mut vault = self.get_vault(&aid);
@@ -163,13 +163,14 @@ impl Contract {
         self.vaults.remove(&aid);
         self.total_stake -= to_transfer;
 
-        // 1st promise is to transfer back all their NEAR, we assume near transfer does not fail
-        assert!(to_transfer > 0);
-        let p = Promise::new(aid.clone()).transfer(to_transfer);
+        // assert!(to_transfer > 0);  -- we can't do it - if the callback faile,d then user should still be able to close an account.
+        if to_transfer > 0 {
+            Promise::new(aid.clone()).transfer(to_transfer);
+        }
 
         // if there are no rewards, no need to call self.mint_cheddar_promise
         if rewards == 0 {
-            return p;
+            return;
         }
 
         // 2nd promise is to mint cheddar rewards for the user & close the account
@@ -178,7 +179,7 @@ impl Contract {
         // to become the main promise for the callback,
         // so the success/failure of the mint-call can not be evaluated.
         // Creating 2 separate promises works correctly.
-        return self.mint_cheddar_promise(&aid, rewards.into());
+        self.mint_cheddar_promise(&aid, rewards.into());
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -286,6 +287,7 @@ impl Contract {
                 log!("Cheddar minting failed, recovering the account");
                 let mut vault = self.get_vault_or_default(&user);
                 vault.rewards += amount.0;
+                vault.previous = self.farming_end;
                 self.ping(&mut vault);
                 self.save_vault(&user, &vault);
             }
