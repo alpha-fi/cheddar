@@ -131,6 +131,7 @@ impl Contract {
             Some(mut v) => {
                 let r = self.current_round();
                 let farmed = v.ping(self.compute_s(r), r).into();
+                // AUDIT: the comment is incorrect. The round can be 0 for now >= farming_start
                 // round starts from 1 when now >= farming_start
                 let r0 = if r > 1 { r - 1 } else { 0 };
                 (v.staked.into(), farmed, self.farming_start + r0 * ROUND)
@@ -285,6 +286,7 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
+                // AUDIT: Note, this log doesn't account for the fee.
                 log!("tokens returned {}", amount.0);
             }
 
@@ -293,6 +295,7 @@ impl Contract {
                     "token transfer failed {}. recovering account state",
                     amount.0
                 );
+                // AUDIT: This action doesn't revert `fee_collected` change.
                 self.recover_state(&user, 0, amount.0);
             }
         }
@@ -328,6 +331,9 @@ impl Contract {
         }
         if tokens.0 != 0 {
             let p_return = self.return_tokens(a.clone(), tokens.clone());
+            // AUDIT: joining promises with `and` is unnecessary. This is only needed when you
+            //     want to attach a callback to the result of both promises.
+            //     For current usecase, you can just drop them from memory and they will be scheduled.
             if let Some(p_mint) = p {
                 p = Some(p_mint.and(p_return));
             } else {
@@ -406,10 +412,13 @@ impl Contract {
         if now >= self.farming_end {
             now = self.farming_end;
             // if at the end of farming we don't start a new round then we need to force a new round
+            // AUDIT_1: Should this be (self.farming_end - self.farming_start). Otherwise, it may
+            // be incorrectly adjust the round by 1, when it shouldn't be adjusted.
             if now % ROUND != 0 {
                 adjust = 1
             };
         }
+        // AUDIT: Note, that try_into and unwrap are unnecessary.
         let r: u64 = ((now - self.farming_start) / ROUND).try_into().unwrap();
         r + adjust
     }
