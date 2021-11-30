@@ -88,7 +88,10 @@ impl Contract {
     /// Panics if the function is calle by a not registered minter.
     #[payable]
     pub fn ft_mint(&mut self, receiver_id: &AccountId, amount: U128String, memo: Option<String>) {
-        assert_one_yocto();
+        assert!(
+            env::attached_deposit() >= 1,
+            "Requires attached deposit at least 1 yoctoNEAR"
+        );
         log!(
             "Minting {} CHEDDAR to {}, memo: {}",
             amount.0,
