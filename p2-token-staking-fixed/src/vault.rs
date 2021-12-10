@@ -18,11 +18,11 @@ use crate::*;
 #[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
     /// Contract.s value when the last ping was called and rewards calculated
-    pub s: Balance,
+    pub reward_acc: Balance,
     /// amount of staking token locked in this vault
     pub staked: Balance,
     /// Amount of accumulated, not withdrawn rewards from staking;
-    pub rewards: Balance,
+    pub farmed: Balance,
 }
 
 impl Vault {
@@ -33,22 +33,22 @@ impl Vault {
     `s`: Contract.s value
     `round`: current round
      */
-    pub fn ping(&mut self, s: u128, round: u64) -> u128 {
+    pub fn ping(&mut self, reward_acc: u128, round: u64) -> u128 {
         // note: the round counting stops at self.farming_end
         // if farming didn't start, ignore the rewards update
         if round == 0 {
             return 0;
         }
         // ping in the same round
-        if self.s == s {
-            return self.rewards;
+        if self.reward_acc == reward_acc {
+            return self.farmed;
         }
 
-        let farmed = self.staked * (s - self.s) / ACC_OVERFLOW;
-        self.rewards += farmed;
+        let farmed = self.staked * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
+        self.farmed += farmed;
 
-        self.s = s;
-        return self.rewards;
+        self.reward_acc = reward_acc;
+        return self.farmed;
     }
 }
 
@@ -60,30 +60,33 @@ impl Contract {
 
     pub(crate) fn ping_all(&mut self, v: &mut Vault) -> u128 {
         let r = self.current_round();
-        self.ping_s(r);
-        v.ping(self.s, r)
+        self.update_reward_acc(r);
+        v.ping(self.reward_acc, r)
     }
 
     /// updates the rewards accumulator
-    pub(crate) fn ping_s(&mut self, round: u64) {
-        let new_s = self.compute_s(round);
+    pub(crate) fn update_reward_acc(&mut self, round: u64) {
+        let new_s = self.compute_reward_acc(round);
         // we should advance with rounds if self.t is zero, otherwise we have a jump and
-        // not properly compute the accumulator.
-        if self.t == 0 || new_s != self.s {
-            self.s = new_s;
-            self.s_round = round;
+        // don't compute properly the accumulator.
+        if self.total_stake == 0 || new_s != self.reward_acc {
+            self.reward_acc = new_s;
+            self.reward_acc_round = round;
         }
     }
 
     /// computes the rewards accumulator.
     /// NOTE: the current, optimized algorithm will not farm anything if
-    ///   `self.rate * 1e6 / self.t < 1`
-    pub(crate) fn compute_s(&self, round: u64) -> u128 {
+    ///   `self.rate * ACC_OVERFLOW / self.t < 1`
+    pub(crate) fn compute_reward_acc(&self, round: u64) -> u128 {
         // covers also when round == 0
-        if self.s_round == round || self.t == 0 {
-            return self.s;
+        if self.reward_acc_round == round || self.total_stake == 0 {
+            return self.reward_acc;
         }
-        self.s + u128::from(round - self.s_round) * self.rate * ACC_OVERFLOW / self.t
+
+        self.reward_acc
+            + u128::from(round - self.reward_acc_round) * self.rate * ACC_OVERFLOW
+                / self.total_stake
     }
 }
 
@@ -120,7 +123,7 @@ impl FungibleTokenReceiver for Contract {
         log!("Staked, {} {}", amount.0, token);
         v.staked += amount.0;
         self.vaults.insert(sender_id, &v);
-        self.t += amount.0; // must be called after ping_s
+        self.total_stake += amount.0; // must be called after ping_s
 
         return PromiseOrValue::Value(U128(0));
     }
@@ -147,13 +150,13 @@ impl StorageManagement for Contract {
             }
         } else {
             assert!(
-                amount >= NEAR_BALANCE,
+                amount >= STORAGE_COST,
                 "The attached deposit is less than the minimum storage balance ({})",
-                NEAR_BALANCE
+                STORAGE_COST
             );
             self.create_account(&account_id, 0);
 
-            let refund = amount - NEAR_BALANCE;
+            let refund = amount - STORAGE_COST;
             if refund > 0 {
                 Promise::new(env::predecessor_account_id()).transfer(refund);
             }
@@ -181,8 +184,8 @@ impl StorageManagement for Contract {
     /// Mix and min balance is always MIN_BALANCE.
     fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds {
-            min: NEAR_BALANCE.into(),
-            max: Some(NEAR_BALANCE.into()),
+            min: STORAGE_COST.into(),
+            max: Some(STORAGE_COST.into()),
         }
     }
 
@@ -199,7 +202,7 @@ impl StorageManagement for Contract {
 
 fn storage_balance() -> StorageBalance {
     StorageBalance {
-        total: NEAR_BALANCE.into(),
+        total: STORAGE_COST.into(),
         available: U128::from(0),
     }
 }

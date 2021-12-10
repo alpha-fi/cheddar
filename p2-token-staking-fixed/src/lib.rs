@@ -44,11 +44,11 @@ pub struct Contract {
     pub total_harvested: u128,
     /// rewards accumulator: running sum of staked rewards per token (equals to the total
     /// number of farmed tokens).
-    s: u128,
+    reward_acc: u128,
     /// round number when the s was previously updated.
-    s_round: u64,
+    reward_acc_round: u64,
     /// total amount of currently staked tokens.
-    t: u128,
+    total_stake: u128,
     /// total number of accounts currently registered.
     pub accounts_registered: u64,
     /// Free rate in basis points. The fee is charged from the user staked tokens
@@ -94,9 +94,9 @@ impl Contract {
             total_harvested: 0,
             farming_start,
             farming_end,
-            s: 0,
-            s_round: 0,
-            t: 0,
+            reward_acc: 0,
+            reward_acc_round: 0,
+            total_stake: 0,
             accounts_registered: 0,
             fee_rate: fee_rate.into(),
             fee_collected: 0,
@@ -118,7 +118,7 @@ impl Contract {
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
-            total_staked: self.t.into(),
+            total_staked: self.total_stake.into(),
             total_farmed: (u128::from(r) * self.rate).into(),
             fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
@@ -130,7 +130,7 @@ impl Contract {
         return match self.vaults.get(&account_id) {
             Some(mut v) => {
                 let r = self.current_round();
-                let farmed = v.ping(self.compute_s(r), r).into();
+                let farmed = v.ping(self.compute_reward_acc(r), r).into();
                 // round starts from 1 when now >= farming_start
                 let r0 = if r > 1 { r - 1 } else { 0 };
                 (v.staked.into(), farmed, self.farming_start + r0 * ROUND)
@@ -160,13 +160,13 @@ impl Contract {
         let mut v = self.get_vault(&a);
         assert!(amount_u <= v.staked, "{}", ERR30_NOT_ENOUGH_STAKE);
         if amount_u == v.staked {
-            //unstake all => close -- simplify UI
+            //unstake all => close -- simplify UX
             self.close();
             return v.staked.into();
         }
         self.ping_all(&mut v);
         v.staked -= amount_u;
-        self.t -= amount_u;
+        self.total_stake -= amount_u;
 
         self.vaults.insert(&a, &v);
         self.return_tokens(a, amount);
@@ -185,21 +185,22 @@ impl Contract {
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
         self.ping_all(&mut v);
-        log!("Closing {} account, farmed CHEDDAR: {}", &a, v.rewards);
+        log!("Closing {} account, farmed CHEDDAR: {}", &a, v.farmed);
+
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
-        if v.staked == 0 && v.rewards == 0 {
+        if v.staked == 0 && v.farmed == 0 {
             self.vaults.remove(&a);
-            Promise::new(a.clone()).transfer(NEAR_BALANCE);
+            Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
         }
 
-        self.t -= v.staked;
+        self.total_stake -= v.staked;
 
         // We remove the vault but we will try to recover in a callback if a minting will fail.
         self.vaults.remove(&a);
         self.accounts_registered -= 1;
-        self.mint_cheddar(&a, v.rewards.into(), v.staked.into());
+        self.mint_cheddar(&a, v.farmed.into(), v.staked.into());
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -210,9 +211,9 @@ impl Contract {
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
         self.ping_all(&mut v);
-        let rewards = v.rewards;
+        let rewards = v.farmed;
         // zero the rewards to block double-withdraw-cheddar
-        v.rewards = 0;
+        v.farmed = 0;
         self.vaults.insert(&a, &v);
         self.mint_cheddar(&a, rewards.into(), 0.into());
     }
@@ -286,6 +287,11 @@ impl Contract {
 
             PromiseResult::Successful(_) => {
                 log!("tokens returned {}", amount.0);
+                // we can't remove the vault here, because we don't know if `mint` succeded
+                //  if it didn't succed, the the mint_callback will try to recover the vault
+                //  and recreate it - so potentially we will send back to the user NEAR deposit
+                //  multiple times. User should call `close` second time to get back
+                //  his NEAR deposit.
             }
 
             PromiseResult::Failed => {
@@ -298,9 +304,10 @@ impl Contract {
         }
     }
 
-    /// mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
-    /// NOTE: the destination account must be registered on CHEDDAR first!
-    /// NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the call, because in case of failure the callbacks will re-add rewards to the vault
+    /** mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
+    / NOTE: the destination account must be registered on CHEDDAR first!
+    / NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the
+    /       call, because in case of failure the callbacks will re-add rewards to the vault */
     fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) {
         if cheddar_amount.0 == 0 && tokens.0 == 0 {
             // nothing to mint nor return.
@@ -335,11 +342,6 @@ impl Contract {
             }
         }
         let _p = p.unwrap();
-        // return p.then(ext_self::mint_callback_finally(
-        //     &env::current_account_id(),
-        //     0,
-        //     GAS_FOR_MINT_CALLBACK_FINALLY,
-        // ));
     }
 
     #[private]
@@ -367,29 +369,18 @@ impl Contract {
         if let Some(v2) = self.vaults.get(&user) {
             v = v2;
             v.staked += staked;
-            v.rewards += cheddar;
+            v.farmed += cheddar;
         } else {
             // If the vault was closed before by another TX, then we must recover the state
             self.accounts_registered += 1;
             v = Vault {
-                s: self.s,
+                reward_acc: self.reward_acc,
                 staked,
-                rewards: cheddar,
+                farmed: cheddar,
             }
         }
 
         self.vaults.insert(user, &v);
-    }
-
-    #[private]
-    pub fn mint_callback_finally(&mut self) {
-        // TODO:
-        // previously we were using a hack: checking if user account exists.
-        // We should collect the values from other callbacks, beacuse the acocunt may
-        // exist if we mint cheddar but the user continues to stake (eg with `withdraw_crop`)
-
-        // TODO: return NEAR
-        // Promise::new(a.clone()).transfer(NEAR_BALANCE);
     }
 
     /// Returns the round number since `start`.
@@ -419,9 +410,9 @@ impl Contract {
             &user,
             &Vault {
                 // warning: previous can be set in the future
-                s: self.s,
+                reward_acc: self.reward_acc,
                 staked,
-                rewards: 0,
+                farmed: 0,
             },
         );
         self.accounts_registered += 1;
@@ -537,7 +528,7 @@ mod tests {
     )]
     fn test_min_storage_deposit() {
         let (mut ctx, mut ctr) = setup_contract(acc_user1(), 0, 1, 0);
-        testing_env!(ctx.attached_deposit(NEAR_BALANCE / 4).build());
+        testing_env!(ctx.attached_deposit(STORAGE_COST / 4).build());
         ctr.storage_deposit(None, None);
     }
 
@@ -551,14 +542,14 @@ mod tests {
             _ => {}
         };
 
-        testing_env!(ctx.attached_deposit(NEAR_BALANCE).build());
+        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
         ctr.storage_deposit(None, None);
         match ctr.storage_balance_of(user) {
             None => panic!("user account should be registered"),
             Some(s) => {
                 assert_eq!(s.available.0, 0, "availabe should be 0");
                 assert_eq!(
-                    s.total.0, NEAR_BALANCE,
+                    s.total.0, STORAGE_COST,
                     "total user storage deposit should be correct"
                 );
             }
@@ -570,10 +561,13 @@ mod tests {
         let user = acc_user1();
         let user_a: AccountId = user.clone().into();
         let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
-        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
 
         // register an account
-        testing_env!(ctx.attached_deposit(NEAR_BALANCE).build());
+        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
         ctr.storage_deposit(None, None);
 
         // ------------------------------------------------
@@ -585,7 +579,10 @@ mod tests {
 
         let (a1_s, a1_r, _) = ctr.status(user_a.clone());
         assert_eq!(a1_s.0, E24, "user stake");
-        assert_eq!(ctr.t, a1_s.0, "total stake should equal to account1 stake");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to account1 stake"
+        );
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
@@ -595,7 +592,10 @@ mod tests {
         let (a1_s, a1_r, _) = ctr.status(user_a.clone());
         assert_eq!(a1_s.0, 4 * E24, "user stake increased");
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-        assert_eq!(ctr.t, a1_s.0, "total stake should equal to the user stake");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to the user stake"
+        );
 
         // ------------------------------------------------
         // Staking before the beginning won't yield rewards
@@ -657,7 +657,7 @@ mod tests {
         // User2 joins, but his stake will only be taken into account for the next round.
         // register an account
         testing_env!(ctx
-            .attached_deposit(NEAR_BALANCE)
+            .attached_deposit(STORAGE_COST)
             .predecessor_account_id(user2.clone())
             .block_timestamp(14 * B_ROUND)
             .build());
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(a2_r.0, 6 * RATE / 3, "account2 first farming is correct");
 
         assert_eq!(
-            ctr.t,
+            ctr.total_stake,
             a1_s.0 + a2_s.0,
             "total stake should equal to sum of  user stake"
         );
@@ -731,11 +731,14 @@ mod tests {
         let user = acc_user1();
         let user_a: AccountId = user.clone().into();
         let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
-        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
 
         // register an account
         testing_env!(ctx
-            .attached_deposit(NEAR_BALANCE)
+            .attached_deposit(STORAGE_COST)
             .block_timestamp(15 * ROUND)
             .build());
         ctr.storage_deposit(None, None);
@@ -743,7 +746,10 @@ mod tests {
         stake(&mut ctx, &mut ctr, &user, E24, 15);
         let (a1_s, a1_r, _) = ctr.status(user_a.clone());
         assert_eq!(a1_s.0, E24, "user stake");
-        assert_eq!(ctr.t, a1_s.0, "total stake should equal to account1 stake");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to account1 stake"
+        );
         assert_eq!(
             a1_r.0, 0,
             "no cheddar should be rewarded in a round when user joins the pool"
@@ -756,7 +762,7 @@ mod tests {
         assert_eq!(a1_r.0, RATE, "account1 farming");
 
         assert_eq!(
-            ctr.t, a1_s.0,
+            ctr.total_stake, a1_s.0,
             "total stake should equal to the user  user stake"
         );
     }
@@ -766,11 +772,14 @@ mod tests {
         let user = acc_user1();
         let user_a: AccountId = user.clone().into();
         let (mut ctx, mut ctr) =
-            setup_contract(user.clone(), NEAR_BALANCE.try_into().unwrap(), 14, 0);
+            setup_contract(user.clone(), STORAGE_COST.try_into().unwrap(), 14, 0);
 
         // register an account
         ctr.storage_deposit(None, None);
-        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
 
         // ------------------------------------------------
         // user joins after the farm started
@@ -783,7 +792,10 @@ mod tests {
             a1_r.0, 0,
             "no cheddar should be rewarded during the first round of staking"
         );
-        assert_eq!(ctr.t, a1_s.0, "total stake should equal to the user stake");
+        assert_eq!(
+            ctr.total_stake, a1_s.0,
+            "total stake should equal to the user stake"
+        );
 
         testing_env!(ctx.block_timestamp(16 * B_ROUND).build());
         let (_, a1_r, _) = ctr.status(user_a.clone());
@@ -800,13 +812,16 @@ mod tests {
         let user3_a: AccountId = user3.clone().into();
 
         let (mut ctx, mut ctr) =
-            setup_contract(user.clone(), NEAR_BALANCE.try_into().unwrap(), 9, 0);
+            setup_contract(user.clone(), STORAGE_COST.try_into().unwrap(), 9, 0);
 
         // register accounts
         ctr.storage_deposit(None, None);
         ctr.storage_deposit(Some(user2.clone()), None);
         ctr.storage_deposit(Some(user3.clone()), None);
-        assert_eq!(ctr.t, 0, "at the beginning there should be 0 total stake");
+        assert_eq!(
+            ctr.total_stake, 0,
+            "at the beginning there should be 0 total stake"
+        );
 
         // ------------------------------------------------
         // All users will stake before the farm started
@@ -818,7 +833,7 @@ mod tests {
         let (a1_s, a1_r, _) = ctr.status(user_a.clone());
         assert_eq!(a1_s.0, 8 * E24, "user stake is correct");
         assert_eq!(a1_r.0, 0, "no cheddar should be rewarded");
-        assert_eq!(ctr.t, 24 * E24, "total stake should be correct");
+        assert_eq!(ctr.total_stake, 24 * E24, "total stake should be correct");
 
         // ------------------------------------------------
         // After second round all users should have correct rewards
@@ -826,7 +841,7 @@ mod tests {
         let (s, r, _) = ctr.status(user_a.clone());
         assert_eq!(s.0, 8 * E24, "user1 stake is correct");
         assert_eq!(r.0, 4 * 2 * E24, "cheddar should be rewarded");
-        assert_eq!(ctr.t, 24 * E24, "total stake should be correct");
+        assert_eq!(ctr.total_stake, 24 * E24, "total stake should be correct");
 
         let (s, r, _) = ctr.status(user2_a.clone());
         assert_eq!(s.0, 4 * E24, "user2 stake is correct");
