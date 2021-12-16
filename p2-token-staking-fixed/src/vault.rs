@@ -206,3 +206,9 @@ fn storage_balance() -> StorageBalance {
         available: U128::from(0),
     }
 }
+
+// use uint::construct_uint;
+// construct_uint! {
+//     /// 256-bit unsigned integer.
+//     struct U256(4);
+// }

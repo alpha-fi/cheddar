@@ -80,10 +80,7 @@ impl Contract {
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
-        assert!(
-            farming_end > farming_start,
-            "Start must be after end, end at there must be at least one round difference"
-        );
+        assert!(farming_end > farming_start, "End must be after start");
         Self {
             owner_id: owner_id.into(),
             cheddar: cheddar.into(),
@@ -249,6 +246,13 @@ impl Contract {
     pub fn set_active(&mut self, is_open: bool) {
         self.assert_owner();
         self.is_active = is_open;
+    }
+
+    /// start and end are unix timestamps (in seconds)
+    pub fn set_end(&mut self, end: u64) {
+        self.assert_owner();
+        assert!(end > self.farming_start, "End must be after start");
+        self.farming_end = end;
     }
 
     /*****************
