@@ -53,6 +53,8 @@ impl Vault {
 }
 
 impl Contract {
+    /// Returns the registered vault.
+    /// Panics if the account is not registered.
     #[inline]
     pub(crate) fn get_vault(&self, account_id: &AccountId) -> Vault {
         self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)

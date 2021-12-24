@@ -194,10 +194,13 @@ impl Contract {
 
         self.total_stake -= v.staked;
 
-        // We remove the vault but we will try to recover in a callback if a minting will fail.
-        self.vaults.remove(&a);
-        self.accounts_registered -= 1;
-        self.mint_cheddar(&a, v.farmed.into(), v.staked.into());
+        // We remove the vault in the callback at the end
+        let farmed = v.farmed;
+        let staked = v.staked;
+        v.staked = 0;
+        v.farmed = 0;
+        self.vaults.insert(&a, &v);
+        self.mint_cheddar(&a, farmed.into(), staked.into(), true);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -212,7 +215,7 @@ impl Contract {
         // zero the rewards to block double-withdraw-cheddar
         v.farmed = 0;
         self.vaults.insert(&a, &v);
-        self.mint_cheddar(&a, rewards.into(), 0.into());
+        self.mint_cheddar(&a, rewards.into(), 0.into(), false);
     }
 
     /// Returns the amount of collected fees which are not withdrawn yet.
@@ -312,7 +315,7 @@ impl Contract {
     / NOTE: the destination account must be registered on CHEDDAR first!
     / NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the
     /       call, because in case of failure the callbacks will re-add rewards to the vault */
-    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128) {
+    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128, close: bool) {
         if cheddar_amount.0 == 0 && tokens.0 == 0 {
             // nothing to mint nor return.
             return;
@@ -345,7 +348,14 @@ impl Contract {
                 p = Some(p_return);
             }
         }
-        let _p = p.unwrap();
+        if close {
+            p.unwrap().then(ext_self::close_account(
+                a.clone(),
+                &env::current_account_id(),
+                0,
+                GAS_FOR_MINT_CALLBACK,
+            ));
+        }
     }
 
     #[private]
@@ -364,6 +374,28 @@ impl Contract {
             PromiseResult::Failed => {
                 log!("cheddar mint failed {}. recovering account state", amount.0);
                 self.recover_state(&user, amount.0, 0);
+            }
+        }
+    }
+
+    #[private]
+    pub fn close_account(&mut self, user: AccountId) {
+        let mut all_good = true;
+        for i in 0..env::promise_results_count() {
+            match env::promise_result(i) {
+                PromiseResult::Failed => all_good = false,
+                _ => {}
+            }
+        }
+        if !all_good {
+            return;
+        }
+        if let Some(v) = self.vaults.get(&user) {
+            if v.staked == 0 && v.farmed == 0 {
+                log!("returning storage deposit");
+                self.vaults.remove(&user);
+                self.accounts_registered -= 1;
+                Promise::new(user).transfer(STORAGE_COST);
             }
         }
     }
