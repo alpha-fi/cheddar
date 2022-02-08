@@ -24,3 +24,6 @@ pub const MAX_STAKE: Balance = E24 * 100_000;
 // TODO: need to addjust it accordingly to the reward rate and the staked token.
 // Eg: if
 pub const ACC_OVERFLOW: Balance = 10_000_000; // 1e7
+
+// TOKENS
+pub const NEAR_TOKEN: &str = "near";

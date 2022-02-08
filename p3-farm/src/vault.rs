@@ -9,9 +9,6 @@ use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
 
-// use crate::constants::*;
-// use crate::errors::*;
-// use crate::util::*;
 use crate::*;
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -20,39 +17,37 @@ pub struct Vault {
     /// Contract.reward_acc value when the last ping was called and rewards calculated
     pub reward_acc: Balance,
     /// amount of staking token locked in this vault
+    // TODO: handle near update here!
     pub staked: Vec<Balance>,
-    pub staked_near: Balance,
+    pub min_stake: Balance,
     /// Amount of accumulated, not withdrawn farmed units. When withdrawing the
     /// farmed units are translated to all `Contract.farm_tokens` based on
     /// `Contract.farm_token_rates`
-    pub farmed: Vec<Balance>,
+    pub farmed: Balance,
+    /// round number when the last update was made.
+    pub round: u64,
 }
 
 impl Vault {
     /**
     Update rewards for locked tokens in past epochs
-    returns total account rewards
     Arguments:
     `s`: Contract.s value
     `round`: current round
      */
-    // TODO: change return type
-    pub fn ping(&mut self, reward_acc: u128, round: u64) -> u128 {
-        // note: the round counting stops at self.farming_end
+    pub fn ping(&mut self, reward_acc: Balance, round: u64) {
+        // note: the last round is at self.farming_end
         // if farming didn't start, ignore the rewards update
-        if round == 0 {
-            return 0;
+        if round == 0 || self.round >= round {
+            return; // 0;
         }
-        // ping in the same round or using in a new farm iteration
+        // no new rewards
         if self.reward_acc >= reward_acc {
-            return self.farmed;
+            return; // self.farmed;
         }
 
-        let farmed = self.staked * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
-        self.farmed += farmed;
-
+        self.farmed += self.min_stake * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
         self.reward_acc = reward_acc;
-        return self.farmed;
     }
 }
 
@@ -64,19 +59,19 @@ impl Contract {
         self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)
     }
 
-    pub(crate) fn ping_all(&mut self, v: &mut Vault) -> u128 {
+    pub(crate) fn ping_all(&mut self, v: &mut Vault) {
         let r = self.current_round();
         self.update_reward_acc(r);
-        v.ping(self.reward_acc, r)
+        v.ping(self.reward_acc, r);
     }
 
     /// updates the rewards accumulator
     pub(crate) fn update_reward_acc(&mut self, round: u64) {
-        let new_s = self.compute_reward_acc(round);
+        let new_acc = self.compute_reward_acc(round);
         // we should advance with rounds if self.t is zero, otherwise we have a jump and
         // don't compute properly the accumulator.
-        if self.total_stake == 0 || new_s != self.reward_acc {
-            self.reward_acc = new_s;
+        if self.staked_units == 0 || new_acc != self.reward_acc {
+            self.reward_acc = new_acc;
             self.reward_acc_round = round;
         }
     }
@@ -86,13 +81,13 @@ impl Contract {
     ///   `self.rate * ACC_OVERFLOW / self.t < 1`
     pub(crate) fn compute_reward_acc(&self, round: u64) -> u128 {
         // covers also when round == 0
-        if self.reward_acc_round == round || self.total_stake == 0 {
+        if self.reward_acc_round == round || self.staked_units == 0 {
             return self.reward_acc;
         }
 
         self.reward_acc
-            + u128::from(round - self.reward_acc_round) * self.farm_rate * ACC_OVERFLOW
-                / self.total_stake
+            + u128::from(round - self.reward_acc_round) * self.farm_unit_rate * ACC_OVERFLOW
+                / self.staked_units
     }
 }
 
@@ -114,22 +109,23 @@ impl FungibleTokenReceiver for Contract {
     ) -> PromiseOrValue<U128> {
         self.assert_is_active();
         let token = env::predecessor_account_id();
-        assert!(
-            token == self.stake_tokens,
-            "Only {} token transfers are accepted",
-            self.stake_tokens
-        );
+        let token_i = find_acc_idx(&token, &self.stake_tokens);
         assert!(amount.0 > 0, "staked amount must be positive");
-        let sender_id: &AccountId = sender_id.as_ref();
+        let sender_id = sender_id.as_ref();
         let mut v = self.get_vault(sender_id);
 
         // firstly update the past rewards
         self.ping_all(&mut v);
-
         log!("Staked, {} {}", amount.0, token);
-        v.staked += amount.0;
+        v.staked[token_i] += amount.0;
+        let s = min_stake(&v.staked, &self.stake_rates);
+        if s > v.min_stake {
+            let diff = s - v.min_stake;
+            v.min_stake = s;
+            self.staked_units += s; // must be called after ping_s
+        }
+
         self.vaults.insert(sender_id, &v);
-        self.total_stake += amount.0; // must be called after ping_s
 
         return PromiseOrValue::Value(U128(0));
     }
@@ -212,9 +208,3 @@ fn storage_balance() -> StorageBalance {
         available: U128::from(0),
     }
 }
-
-// use uint::construct_uint;
-// construct_uint! {
-//     /// 256-bit unsigned integer.
-//     struct U256(4);
-// }

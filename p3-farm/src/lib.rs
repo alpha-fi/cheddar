@@ -35,9 +35,10 @@ pub struct Contract {
     /// user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     pub stake_tokens: Vec<AccountId>,
+    pub staked_units: Balance,
     /// Rate between the staking token and cheddar in 1e24.
-    /// When farming the `min(cheddar, staking_token*stake_rate/1e24)` is taken
-    /// for farming balance.
+    /// When farming the `min(staking_token*stake_rate/1e24)` is taken
+    /// for farming stake.
     /// Cheddar should be the first stake token.
     pub stake_rates: Vec<u128>,
     pub farm_tokens: Vec<AccountId>,
@@ -46,14 +47,17 @@ pub struct Contract {
     /// a user `vault.farmed*farm_tokens[i]/1e24`.
     /// Farmed tokens are distributed to all users proportionally to their stake.
     pub farm_token_rates: Vec<u128>,
+    /// amount of $farm_unit farmed during each round. Round duration is defined in constants.rs
+    /// Farmed $farm_units are distributed to all users proportionally to their stake.
+    pub farm_unit_rate: u128,
     /// unix timestamp (seconds) when the farming starts.
     pub farming_start: u64,
     /// unix timestamp (seconds) when the farming ends (first time with no farming).
     pub farming_end: u64,
     /// total number of harvested farm tokens
     pub total_harvested: Vec<Balance>,
-    /// rewards accumulator: running sum of staked rewards per token (equals to the total
-    /// number of farmed tokens).
+    /// rewards accumulator: running sum of farm_units per token (equals to the total
+    /// number of farmed unit tokens).
     reward_acc: u128,
     /// round number when the s was previously updated.
     reward_acc_round: u64,
@@ -196,12 +200,13 @@ impl Contract {
             return 0.into();
         }
         self.ping_all(&mut v);
-        v.staked[token_i] -= amount_u;
+        let remaining = v.staked[token_i] - amount_u;
+        v.staked[token_i] -= remaining;
         self.total_stake[token_i] -= amount_u;
         self.vaults.insert(&a, &v);
 
         self.return_tokens(a, token_i, amount);
-        return v.staked[token_i].into();
+        return remaining.into();
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -307,11 +312,16 @@ impl Contract {
     fn return_tokens(&mut self, user: AccountId, token_i: usize, amount: U128) -> Promise {
         let fee = amount.0 * self.fee_rate / 10_000;
         self.fee_collected[token_i] += fee;
+        let token = self.stake_tokens[token_i];
+        if token == NEAR_TOKEN {
+            return Promise::new(user).transfer(amount.0);
+        }
+
         return ext_ft::ft_transfer(
             user.clone(),
             (amount.0 - fee).into(),
             Some("unstaking".to_string()),
-            &self.stake_tokens[token_i],
+            &token,
             1,
             GAS_FOR_FT_TRANSFER,
         )
