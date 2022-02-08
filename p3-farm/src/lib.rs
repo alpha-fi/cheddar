@@ -98,7 +98,7 @@ impl Contract {
             owner_id: owner_id.into(),
             treasury: treasury.into(),
             vaults: LookupMap::new(b"v".to_vec()),
-            stake_tokens: vec![cheddar.0, stake_token.0),
+            stake_tokens: vec![cheddar.into(), stake_token.into()],
             stake_rates: vec![1, stake_rate.into()],
             farm_tokens: vec![farm_token.into()],
             farm_token_rates: vec![farm_token_ratio.0],
@@ -119,17 +119,16 @@ impl Contract {
         let sl = self.stake_tokens.len();
         assert!(
             fl == self.farm_token_rates.len()
-            && fl == self.total_harvested.len()
-            && fl == self.fee_collected.len(),
+                && fl == self.total_harvested.len()
+                && fl == self.fee_collected.len(),
             "stake token vector length is not correct"
         );
         assert!(
-                sl == self.stake_rates.len()
+            sl == self.stake_rates.len()
                 && sl == self.total_stake.len()
                 && sl == self.fee_collected.len(),
             "stake token vector length is not correct"
         );
-
     }
 
     // ************ //
@@ -140,33 +139,34 @@ impl Contract {
         let r = self.current_round();
         ContractParams {
             owner_id: self.owner_id.clone(),
-            farming_token: self.cheddar.clone(),
-            staked_token: self.stake_tokens.clone(),
-            farming_rate: self.farm_rate.into(),
+            stake_tokens: self.stake_tokens,
+            stake_rates: to_u128_vec(&self.stake_rates),
+            farm_tokens: self.farm_tokens,
+            farm_token_rates: to_u128_vec(&self.farm_token_rates),
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
-            total_staked: self.total_stake.into(),
-            total_farmed: (u128::from(r) * self.farm_rate).into(),
+            total_staked: to_u128_vec(&self.total_stake),
+            total_farmed: to_u128_vec(&self.total_harvested),
             fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
         }
     }
 
-    /// Returns amount of staked tokens, farmed CHEDDAR and the timestamp of the current round.
-    pub fn status(&self, account_id: AccountId) -> (U128, U128, u64) {
+    pub fn status(&self, account_id: AccountId) -> Option<Status> {
         return match self.vaults.get(&account_id) {
             Some(mut v) => {
                 let r = self.current_round();
-                let farmed = v.ping(self.compute_reward_acc(r), r).into();
+                v.ping(self.compute_reward_acc(r), r);
                 // round starts from 1 when now >= farming_start
                 let r0 = if r > 1 { r - 1 } else { 0 };
-                (v.staked.into(), farmed, self.farming_start + r0 * ROUND)
+                return Some(Status {
+                    stake_tokens: to_u128_vec(&v.staked),
+                    farmed: to_u128_vec(&v.farmed),
+                    timestamp: self.farming_start + r0 * ROUND,
+                });
             }
-            None => {
-                let zero = U128::from(0);
-                return (zero, zero, 0);
-            }
+            None => None,
         };
     }
 
@@ -180,25 +180,28 @@ impl Contract {
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet 2FA.
     #[payable]
-    pub fn unstake(&mut self, amount: U128) -> U128 {
+    pub fn unstake(&mut self, token: ValidAccountId, amount: U128) -> U128 {
         self.assert_is_active();
         assert_one_yocto();
+        let token = token.as_ref();
+        let token_i = find_acc_idx(token, &self.stake_tokens);
         let amount_u = amount.0;
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
-        assert!(amount_u <= v.staked, "{}", ERR30_NOT_ENOUGH_STAKE);
-        if amount_u == v.staked {
-            //unstake all => close -- simplify UX
+
+        assert!(amount_u <= v.staked[token_i], "{}", ERR30_NOT_ENOUGH_STAKE);
+        if amount_u == v.staked.iter().sum() {
+            // no other token is staked,  => close -- simplify UX
             self.close();
-            return v.staked.into();
+            return 0.into();
         }
         self.ping_all(&mut v);
-        v.staked -= amount_u;
-        self.total_stake -= amount_u;
-
+        v.staked[token_i] -= amount_u;
+        self.total_stake[token_i] -= amount_u;
         self.vaults.insert(&a, &v);
-        self.return_tokens(a, amount);
-        return v.staked.into();
+
+        self.return_tokens(a, token_i, amount);
+        return v.staked[token_i].into();
     }
 
     /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
@@ -213,17 +216,19 @@ impl Contract {
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
         self.ping_all(&mut v);
-        log!("Closing {} account, farmed CHEDDAR: {}", &a, v.farmed);
+        log!("Closing {} account, farmed: {:?}", &a, v.farmed);
 
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
-        if v.staked == 0 && v.farmed == 0 {
+        if all_zeros(&v.staked) && all_zeros(&v.farmed) {
             self.vaults.remove(&a);
             Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
         }
 
-        self.total_stake -= v.staked;
+        for i in 0..self.total_stake.len() {
+            self.total_stake[i] -= v.staked[i];
+        }
 
         // We remove the vault in the callback at the end
         let farmed = v.farmed;
@@ -296,21 +301,23 @@ impl Contract {
         assert!(self.is_active, "contract is not active");
     }
 
-    /// transfers staked tokens back to the user
+    /// transfers staked tokens (token identified by an index in
+    /// self.stake_tokens) back to the user.
     #[inline]
-    fn return_tokens(&mut self, user: AccountId, amount: U128) -> Promise {
+    fn return_tokens(&mut self, user: AccountId, token_i: usize, amount: U128) -> Promise {
         let fee = amount.0 * self.fee_rate / 10_000;
-        self.fee_collected += fee;
+        self.fee_collected[token_i] += fee;
         return ext_ft::ft_transfer(
             user.clone(),
             (amount.0 - fee).into(),
             Some("unstaking".to_string()),
-            &self.stake_tokens,
+            &self.stake_tokens[token_i],
             1,
             GAS_FOR_FT_TRANSFER,
         )
         .then(ext_self::return_tokens_callback(
             user,
+            token_i,
             amount,
             &env::current_account_id(),
             0,
@@ -318,8 +325,10 @@ impl Contract {
         ));
     }
 
+    // TODO: probably use 2 different functions: one  for stake tokens and another
+    // one for farm tokens.
     #[private]
-    pub fn return_tokens_callback(&mut self, user: AccountId, amount: U128) {
+    pub fn return_tokens_callback(&mut self, user: AccountId, token_i: usize, amount: U128) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
 
@@ -334,9 +343,11 @@ impl Contract {
 
             PromiseResult::Failed => {
                 log!(
-                    "token transfer failed {}. recovering account state",
+                    "{} token transfer failed {}. recovering account state",
+                    self.stake_tokens[token_i],
                     amount.0
                 );
+                // todo: add token index
                 self.recover_state(&user, 0, amount.0);
             }
         }
@@ -422,7 +433,7 @@ impl Contract {
             return;
         }
         if let Some(v) = self.vaults.get(&user) {
-            if v.staked == 0 && v.farmed == 0 {
+            if all_zeros(&v.staked) && all_zeros(&v.farmed) {
                 log!("returning storage deposit");
                 self.vaults.remove(&user);
                 self.accounts_registered -= 1;

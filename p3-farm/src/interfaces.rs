@@ -22,7 +22,7 @@ pub trait StakingPool {
 
 #[ext_contract(ext_self)]
 pub trait ExtSelf {
-    fn return_tokens_callback(&mut self, user: AccountId, amount: U128);
+    fn return_tokens_callback(&mut self, user: AccountId, token_i: usize, amount: U128);
     fn mint_callback(&mut self, user: AccountId, amount: U128);
     fn mint_callback_finally(&mut self);
     fn close_account(&mut self, user: AccountId);
@@ -40,7 +40,7 @@ pub struct ContractParams {
     pub owner_id: AccountId,
     pub stake_tokens: Vec<AccountId>,
     pub stake_rates: Vec<U128>,
-    pub farming_tokens: Vec<AccountId>,
+    pub farm_tokens: Vec<AccountId>,
     pub farm_token_rates: Vec<U128>,
     pub farming_start: u64,
     pub farming_end: u64,
@@ -51,4 +51,13 @@ pub struct ContractParams {
     pub fee_rate: U128,
     /// Number of accounts currently registered.
     pub accounts_registered: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Status {
+    // TODO: decided what to do with NEAR
+    pub stake_tokens: Vec<U128>,
+    pub farmed: Vec<U128>,
+    /// timestamp of the current round.
+    pub timestamp: u64,
 }

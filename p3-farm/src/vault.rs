@@ -25,7 +25,7 @@ pub struct Vault {
     /// Amount of accumulated, not withdrawn farmed units. When withdrawing the
     /// farmed units are translated to all `Contract.farm_tokens` based on
     /// `Contract.farm_token_rates`
-    pub farmed: Balance,
+    pub farmed: Vec<Balance>,
 }
 
 impl Vault {
@@ -36,14 +36,15 @@ impl Vault {
     `s`: Contract.s value
     `round`: current round
      */
+    // TODO: change return type
     pub fn ping(&mut self, reward_acc: u128, round: u64) -> u128 {
         // note: the round counting stops at self.farming_end
         // if farming didn't start, ignore the rewards update
         if round == 0 {
             return 0;
         }
-        // ping in the same round
-        if self.reward_acc == reward_acc {
+        // ping in the same round or using in a new farm iteration
+        if self.reward_acc >= reward_acc {
             return self.farmed;
         }
 
