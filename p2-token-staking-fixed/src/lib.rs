@@ -66,8 +66,7 @@ impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
     /// * `farming_start` & `farming_end` are unix timestamps (in seconds).
-    /// * `reward_rate` is amount of yoctoCheddars per 1e24 staked tokens (usually tokens are
-    ///    denominated in 1e24 on NEAR).
+    /// * `reward_rate` amount of yocto Cheddar per round (round = 1 second).
     /// * `fee_rate`: the Contract.fee parameter (in basis points)
     #[init]
     pub fn new(
@@ -87,7 +86,7 @@ impl Contract {
             staking_token: staked_token.into(),
             is_active: true,
             vaults: LookupMap::new(b"v".to_vec()),
-            rate: reward_rate.0, //cheddar per round per near (round = 1 second)
+            rate: reward_rate.0,
             total_harvested: 0,
             farming_start,
             farming_end,
@@ -256,6 +255,24 @@ impl Contract {
         self.assert_owner();
         assert!(end > self.farming_start, "End must be after start");
         self.farming_end = end;
+    }
+
+    /// `start` and `end` are new start and end time for farm - both as unix timestamp.
+    /// NOTE: users must harvest before this method is called.
+    pub fn restart(&mut self, start: u64, end: u64, rate: U128) {
+        self.assert_owner();
+        assert!(
+            env::block_timestamp() < start * SECOND,
+            "new start must be in the future"
+        );
+        assert!(start < end, "start must be before end");
+        assert!(rate.0 > 0, "rate must be positive");
+        self.farming_start = start;
+        self.farming_end = end;
+        self.rate = rate.0;
+
+        self.reward_acc_round = 0;
+        self.reward_acc = 0;
     }
 
     /*****************

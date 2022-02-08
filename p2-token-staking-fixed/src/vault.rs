@@ -39,8 +39,8 @@ impl Vault {
         if round == 0 {
             return 0;
         }
-        // ping in the same round
-        if self.reward_acc == reward_acc {
+        // ping in the same round or using in a new farm iteration
+        if self.reward_acc >= reward_acc {
             return self.farmed;
         }
 
