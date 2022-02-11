@@ -177,6 +177,15 @@ impl Contract {
     // ******************* //
     // transaction methods //
 
+    /// stakes native near.
+    /// The transaction fails if near is not included in `self.stake_tokens`.
+    /// Returns amount of staked NEAR.
+    #[payable]
+    pub fn deposit_near(&mut self, token: ValidAccountId, amount: U128) -> U128 {
+        let token_i = find_acc_idx(&NEAR_TOKEN.to_string(), &self.stake_tokens);
+        // TODO
+    }
+
     /// Unstakes given amount of tokens and transfers it back to the user.
     /// If amount equals to the amount staked then we close the account.
     /// NOTE: account once closed must re-register to stake again.

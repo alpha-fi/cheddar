@@ -109,6 +109,10 @@ impl FungibleTokenReceiver for Contract {
     ) -> PromiseOrValue<U128> {
         self.assert_is_active();
         let token = env::predecessor_account_id();
+        assert!(
+            token != NEAR_TOKEN,
+            "near must be sent using deposit_near()"
+        );
         let token_i = find_acc_idx(&token, &self.stake_tokens);
         assert!(amount.0 > 0, "staked amount must be positive");
         let sender_id = sender_id.as_ref();
