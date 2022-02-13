@@ -39,14 +39,20 @@ impl Vault {
         if round == 0 {
             return 0;
         }
-        // ping in the same round or using in a new farm iteration
-        if self.reward_acc >= reward_acc {
+        // ping in the same round
+        if self.reward_acc == reward_acc {
             return self.farmed;
         }
+        let farmed;
+        // using a new farm iteration. Reset.
+        // TODO: on restart we could remember the previous state
+        if self.reward_acc > reward_acc {
+            farmed = 0;
+        } else {
+            farmed = self.staked * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
+        }
 
-        let farmed = self.staked * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
         self.farmed += farmed;
-
         self.reward_acc = reward_acc;
         return self.farmed;
     }
