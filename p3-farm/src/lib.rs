@@ -35,6 +35,7 @@ pub struct Contract {
     /// user vaults
     pub vaults: LookupMap<AccountId, Vault>,
     pub stake_tokens: Vec<AccountId>,
+    /// total number of units currently staked
     pub staked_units: Balance,
     /// Rate between the staking token and cheddar in 1e24.
     /// When farming the `min(staking_token*stake_rate/1e24)` is taken
@@ -44,7 +45,7 @@ pub struct Contract {
     pub farm_tokens: Vec<AccountId>,
     /// Ratios between the farm unit and all farm tokens when computing reward.
     /// When farming, for each token index i in `farm_tokens` we allocate to
-    /// a user `vault.farmed*farm_tokens[i]/1e24`.
+    /// a user `vault.farmed*farm_token_rates[i]/1e24`.
     /// Farmed tokens are distributed to all users proportionally to their stake.
     pub farm_token_rates: Vec<u128>,
     /// amount of $farm_unit farmed during each round. Round duration is defined in constants.rs
@@ -91,7 +92,7 @@ impl Contract {
         stake_rate: U128,
         farming_start: u64,
         farming_end: u64,
-        reward_rate: U128,
+        farm_unit_rate: U128,
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
@@ -103,12 +104,14 @@ impl Contract {
             treasury: treasury.into(),
             vaults: LookupMap::new(b"v".to_vec()),
             stake_tokens: vec![cheddar.into(), stake_token.into()],
+            staked_units: 0,
             stake_rates: vec![1, stake_rate.into()],
             farm_tokens: vec![farm_token.into()],
             farm_token_rates: vec![farm_token_ratio.0],
-            total_harvested: vec![0],
+            farm_unit_rate: farm_unit_rate.0,
             farming_start,
             farming_end,
+            total_harvested: vec![0],
             reward_acc: 0,
             reward_acc_round: 0,
             total_stake: vec![0],
@@ -164,9 +167,14 @@ impl Contract {
                 v.ping(self.compute_reward_acc(r), r);
                 // round starts from 1 when now >= farming_start
                 let r0 = if r > 1 { r - 1 } else { 0 };
+                let farmed = self
+                    .farm_token_rates
+                    .iter()
+                    .map(|ra| U128::from(farmed_tokens(v.farmed, *ra)))
+                    .collect();
                 return Some(Status {
                     stake_tokens: to_u128_vec(&v.staked),
-                    farmed: to_u128_vec(&v.farmed),
+                    farmed,
                     timestamp: self.farming_start + r0 * ROUND,
                 });
             }
@@ -181,9 +189,9 @@ impl Contract {
     /// The transaction fails if near is not included in `self.stake_tokens`.
     /// Returns amount of staked NEAR.
     #[payable]
-    pub fn deposit_near(&mut self, token: ValidAccountId, amount: U128) -> U128 {
-        let token_i = find_acc_idx(&NEAR_TOKEN.to_string(), &self.stake_tokens);
-        // TODO
+    pub fn deposit_near(&mut self, token: ValidAccountId) -> U128 {
+        let a = env::predecessor_account_id();
+        self.stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
     }
 
     /// Unstakes given amount of tokens and transfers it back to the user.
@@ -210,10 +218,17 @@ impl Contract {
         }
         self.ping_all(&mut v);
         let remaining = v.staked[token_i] - amount_u;
-        v.staked[token_i] -= remaining;
+        v.staked[token_i] = remaining;
         self.total_stake[token_i] -= amount_u;
-        self.vaults.insert(&a, &v);
 
+        let s = min_stake(&v.staked, &self.stake_rates);
+        if s < v.min_stake {
+            let diff = v.min_stake - s;
+            v.min_stake = s;
+            self.staked_units -= s; // must be called after ping_s
+        }
+
+        self.vaults.insert(&a, &v);
         self.return_tokens(a, token_i, amount);
         return remaining.into();
     }
@@ -234,7 +249,7 @@ impl Contract {
 
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
-        if all_zeros(&v.staked) && all_zeros(&v.farmed) {
+        if all_zeros(&v.staked) && v.farmed == 0 {
             self.vaults.remove(&a);
             Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
@@ -243,6 +258,8 @@ impl Contract {
         for i in 0..self.total_stake.len() {
             self.total_stake[i] -= v.staked[i];
         }
+        let s = min_stake(&v.staked, &self.stake_rates);
+        self.staked_units -= s;
 
         // We remove the vault in the callback at the end
         let farmed = v.farmed;
@@ -250,7 +267,8 @@ impl Contract {
         v.staked = 0;
         v.farmed = 0;
         self.vaults.insert(&a, &v);
-        self.mint_cheddar(&a, farmed.into(), staked.into(), true);
+        // TODO: send tokens
+        // don't: self.mint_cheddar(&a, farmed.into(), staked.into(), true);
     }
 
     /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
@@ -269,8 +287,8 @@ impl Contract {
     }
 
     /// Returns the amount of collected fees which are not withdrawn yet.
-    pub fn get_collected_fee(&self) -> U128 {
-        self.fee_collected.into()
+    pub fn get_collected_fee(&self) -> Vec<U128> {
+        to_u128_vec(&self.fee_collected)
     }
 
     /// Withdraws all collected fee to the treasury.
@@ -278,7 +296,7 @@ impl Contract {
     /// Panics if the collected fees == 0.
     pub fn withdraw_fee(&mut self) -> Promise {
         assert!(self.fee_collected > 0, "zero collected fees");
-        log!("Withdrawing collected fee: {} tokens", self.fee_collected);
+        log!("Withdrawing collected fee: {:?} tokens", self.fee_collected);
         let fee = U128::from(self.fee_collected);
         self.fee_collected = 0;
         return ext_ft::ft_transfer(

@@ -89,6 +89,25 @@ impl Contract {
             + u128::from(round - self.reward_acc_round) * self.farm_unit_rate * ACC_OVERFLOW
                 / self.staked_units
     }
+
+    pub(crate) fn stake(&mut self, sender: &AccountId, token: &AccountId, amount: Balance) {
+        assert!(amount > 0, "staked amount must be positive");
+        let token_i = find_acc_idx(&token, &self.stake_tokens);
+        let mut v = self.get_vault(sender);
+
+        // firstly update the past rewards
+        self.ping_all(&mut v);
+        log!("Staked, {} {}", amount, token);
+        v.staked[token_i] += amount;
+        let s = min_stake(&v.staked, &self.stake_rates);
+        if s > v.min_stake {
+            let diff = s - v.min_stake;
+            v.min_stake = s;
+            self.staked_units += s; // must be called after ping_s
+        }
+        self.vaults.insert(sender, &v);
+        self.total_stake[token_i] += amount;
+    }
 }
 
 // token deposits are done through NEP-141 ft_transfer_call to the NEARswap contract.
@@ -113,23 +132,8 @@ impl FungibleTokenReceiver for Contract {
             token != NEAR_TOKEN,
             "near must be sent using deposit_near()"
         );
-        let token_i = find_acc_idx(&token, &self.stake_tokens);
         assert!(amount.0 > 0, "staked amount must be positive");
-        let sender_id = sender_id.as_ref();
-        let mut v = self.get_vault(sender_id);
-
-        // firstly update the past rewards
-        self.ping_all(&mut v);
-        log!("Staked, {} {}", amount.0, token);
-        v.staked[token_i] += amount.0;
-        let s = min_stake(&v.staked, &self.stake_rates);
-        if s > v.min_stake {
-            let diff = s - v.min_stake;
-            v.min_stake = s;
-            self.staked_units += s; // must be called after ping_s
-        }
-
-        self.vaults.insert(sender_id, &v);
+        self.stake(sender_id.as_ref(), &token, amount.0);
 
         return PromiseOrValue::Value(U128(0));
     }

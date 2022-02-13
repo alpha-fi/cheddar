@@ -9,6 +9,10 @@ construct_uint! {
     struct U256(4);
 }
 
+pub fn farmed_tokens(units: Balance, rate: Balance) -> Balance {
+    (U256::from(units) * U256::from(rate) / E24_BIG).as_u128()
+}
+
 pub fn to_u128_vec(v: &Vec<Balance>) -> Vec<U128> {
     v.iter().map(|x| U128::from(*x)).collect()
 }
@@ -23,7 +27,7 @@ pub fn find_acc_idx(acc: &AccountId, acc_v: &Vec<AccountId>) -> usize {
 pub fn min_stake(staked: &Vec<u128>, stake_rates: &Vec<u128>) -> Balance {
     let mut min: u128 = 1 << 128 - 1;
     for (i, rate) in stake_rates.iter().enumerate() {
-        let s = (U256::from(staked[i]) * U256::from(*rate) / E24_BIG).as_u128();
+        let s = farmed_tokens(staked[i], *rate);
         if s < min {
             min = s;
         }
