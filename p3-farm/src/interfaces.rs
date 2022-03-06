@@ -22,7 +22,14 @@ pub trait StakingPool {
 
 #[ext_contract(ext_self)]
 pub trait ExtSelf {
-    fn return_tokens_callback(&mut self, user: AccountId, token_i: usize, amount: U128);
+    fn transfer_staked_callback(
+        &mut self,
+        user: AccountId,
+        token_i: usize,
+        amount: U128,
+        fee: U128,
+    );
+    fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128);
     fn mint_callback(&mut self, user: AccountId, amount: U128);
     fn mint_callback_finally(&mut self);
     fn close_account(&mut self, user: AccountId);

@@ -78,6 +78,7 @@ pub struct Contract {
 impl Contract {
     /// Initializes the contract with the account where the NEP-141 token contract resides, start block-timestamp & rewards_per_year.
     /// Parameters:
+    /// * `stake_tokens`: tokens we are staking, cheddar should be one of them.
     /// * `farming_start` & `farming_end` are unix timestamps (in seconds).
     /// * `reward_rate` is amount of yoctoCheddars per 1e24 staked tokens (usually tokens are
     ///    denominated in 1e24 on NEAR).
@@ -85,11 +86,10 @@ impl Contract {
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
-        cheddar: ValidAccountId,
-        stake_token: ValidAccountId,
-        farm_token: ValidAccountId,
-        farm_token_ratio: U128,
-        stake_rate: U128,
+        stake_tokens: Vec<ValidAccountId>,
+        stake_rates: Vec<U128>,
+        farm_tokens: Vec<ValidAccountId>,
+        farm_token_rates: Vec<U128>,
         farming_start: u64,
         farming_end: u64,
         farm_unit_rate: U128,
@@ -97,28 +97,35 @@ impl Contract {
         treasury: ValidAccountId,
     ) -> Self {
         assert!(farming_end > farming_start, "End must be after start");
-        assert!(farm_token_ratio.0 > 0, "ratio must be positive");
-        Self {
+        assert!(stake_rates[0].0 == E24, "stake_rate[0] must be 1e24");
+        assert!(
+            farm_token_rates[0].0 == E24,
+            "farm_token_rates[0] must be 1e24"
+        );
+        let stake_len = stake_tokens.len();
+        let c = Self {
             is_active: true,
             owner_id: owner_id.into(),
             treasury: treasury.into(),
             vaults: LookupMap::new(b"v".to_vec()),
-            stake_tokens: vec![cheddar.into(), stake_token.into()],
+            stake_tokens: stake_tokens.iter().map(|x| x.to_string()).collect(),
             staked_units: 0,
-            stake_rates: vec![1, stake_rate.into()],
-            farm_tokens: vec![farm_token.into()],
-            farm_token_rates: vec![farm_token_ratio.0],
+            stake_rates: stake_rates.iter().map(|x| x.0).collect(),
+            farm_tokens: farm_tokens.iter().map(|x| x.to_string()).collect(),
+            farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
             farm_unit_rate: farm_unit_rate.0,
             farming_start,
             farming_end,
-            total_harvested: vec![0],
+            total_harvested: vec![0; farm_tokens.len()],
             reward_acc: 0,
             reward_acc_round: 0,
-            total_stake: vec![0],
+            total_stake: vec![0; stake_len],
             accounts_registered: 0,
             fee_rate: fee_rate.into(),
-            fee_collected: vec![0],
-        }
+            fee_collected: vec![0; stake_len],
+        };
+        c.check_vectors();
+        c
     }
 
     fn check_vectors(&self) {
@@ -128,7 +135,7 @@ impl Contract {
             fl == self.farm_token_rates.len()
                 && fl == self.total_harvested.len()
                 && fl == self.fee_collected.len(),
-            "stake token vector length is not correct"
+            "farm token vector length is not correct"
         );
         assert!(
             sl == self.stake_rates.len()
@@ -143,12 +150,11 @@ impl Contract {
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
     pub fn get_contract_params(&self) -> ContractParams {
-        let r = self.current_round();
         ContractParams {
             owner_id: self.owner_id.clone(),
-            stake_tokens: self.stake_tokens,
+            stake_tokens: self.stake_tokens.clone(),
             stake_rates: to_u128_vec(&self.stake_rates),
-            farm_tokens: self.farm_tokens,
+            farm_tokens: self.farm_tokens.clone(),
             farm_token_rates: to_u128_vec(&self.farm_token_rates),
             is_active: self.is_active,
             farming_start: self.farming_start,
@@ -186,10 +192,9 @@ impl Contract {
     // transaction methods //
 
     /// stakes native near.
-    /// The transaction fails if near is not included in `self.stake_tokens`.
-    /// Returns amount of staked NEAR.
+    /// The transaction fails if near is not included in `self.stake_amount`.
     #[payable]
-    pub fn deposit_near(&mut self, token: ValidAccountId) -> U128 {
+    pub fn deposit_near(&mut self) {
         let a = env::predecessor_account_id();
         self.stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
     }
@@ -206,36 +211,35 @@ impl Contract {
         assert_one_yocto();
         let token = token.as_ref();
         let token_i = find_acc_idx(token, &self.stake_tokens);
-        let amount_u = amount.0;
+        let amount = amount.0;
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
 
-        assert!(amount_u <= v.staked[token_i], "{}", ERR30_NOT_ENOUGH_STAKE);
-        if amount_u == v.staked.iter().sum() {
+        assert!(amount <= v.staked[token_i], "{}", ERR30_NOT_ENOUGH_STAKE);
+        if amount == v.staked.iter().sum() {
             // no other token is staked,  => close -- simplify UX
             self.close();
             return 0.into();
         }
         self.ping_all(&mut v);
-        let remaining = v.staked[token_i] - amount_u;
+        let remaining = v.staked[token_i] - amount;
         v.staked[token_i] = remaining;
-        self.total_stake[token_i] -= amount_u;
+        self.total_stake[token_i] -= amount;
 
         let s = min_stake(&v.staked, &self.stake_rates);
         if s < v.min_stake {
             let diff = v.min_stake - s;
             v.min_stake = s;
-            self.staked_units -= s; // must be called after ping_s
+            self.staked_units -= diff; // must be called after ping_s
         }
 
         self.vaults.insert(&a, &v);
-        self.return_tokens(a, token_i, amount);
+        self.transfer_staked_tokens(a, token_i, amount);
         return remaining.into();
     }
 
-    /// Unstakes everything and close the account. Sends all farmed CHEDDAR using a ft_transfer
+    /// Unstakes everything and close the account. Sends all farmed tokens using a ft_transfer
     /// and all staked tokens back to the caller.
-    /// Returns amount of farmed CHEDDAR.
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
     #[payable]
@@ -255,35 +259,42 @@ impl Contract {
             return;
         }
 
-        for i in 0..self.total_stake.len() {
-            self.total_stake[i] -= v.staked[i];
-        }
         let s = min_stake(&v.staked, &self.stake_rates);
         self.staked_units -= s;
-
-        // We remove the vault in the callback at the end
-        let farmed = v.farmed;
-        let staked = v.staked;
-        v.staked = 0;
-        v.farmed = 0;
-        self.vaults.insert(&a, &v);
-        // TODO: send tokens
-        // don't: self.mint_cheddar(&a, farmed.into(), staked.into(), true);
+        for i in 0..self.total_stake.len() {
+            let amount = v.staked[i];
+            self.transfer_staked_tokens(a.clone(), i, amount);
+        }
+        self._withdraw_crop(&a, v.farmed);
+        self.vaults.remove(&a);
     }
 
-    /// Withdraws all farmed CHEDDAR to the user. It doesn't close the account.
-    /// Return amount of farmed CHEDDAR.
+    /// Withdraws all farmed tokens to the user. It doesn't close the account.
     /// Panics if user has not staked anything.
     pub fn withdraw_crop(&mut self) {
         self.assert_is_active();
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
         self.ping_all(&mut v);
-        let rewards = v.farmed;
-        // zero the rewards to block double-withdraw-cheddar
+        let farmed_units = v.farmed;
         v.farmed = 0;
         self.vaults.insert(&a, &v);
-        self.mint_cheddar(&a, rewards.into(), 0.into(), false);
+        self._withdraw_crop(&a, farmed_units);
+    }
+
+    /** transfers harvested tokens to the user
+    / NOTE: the destination account must be registered on CHEDDAR first!
+    / NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the
+    /       call, because in case of failure the callbacks will re-add rewards to the vault */
+    fn _withdraw_crop(&mut self, user: &AccountId, farmed_units: u128) {
+        if farmed_units == 0 {
+            // nothing to mint nor return.
+            return;
+        }
+        for i in 0..self.farm_tokens.len() {
+            let amount = farmed_tokens(farmed_units, self.farm_token_rates[i]);
+            self.transfer_farmed_tokens(user, i, amount);
+        }
     }
 
     /// Returns the amount of collected fees which are not withdrawn yet.
@@ -294,19 +305,21 @@ impl Contract {
     /// Withdraws all collected fee to the treasury.
     /// Must make sure treasury is registered
     /// Panics if the collected fees == 0.
-    pub fn withdraw_fee(&mut self) -> Promise {
-        assert!(self.fee_collected > 0, "zero collected fees");
+    pub fn withdraw_fee(&mut self) {
         log!("Withdrawing collected fee: {:?} tokens", self.fee_collected);
-        let fee = U128::from(self.fee_collected);
-        self.fee_collected = 0;
-        return ext_ft::ft_transfer(
-            self.treasury.clone(),
-            fee,
-            Some("fee withdraw".to_string()),
-            &self.stake_tokens,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        );
+        for i in 0..self.stake_tokens.len() {
+            if self.fee_collected[i] != 0 {
+                ext_ft::ft_transfer(
+                    self.treasury.clone(),
+                    self.fee_collected[i].into(),
+                    Some("fee withdraw".to_string()),
+                    &self.stake_tokens[i],
+                    1,
+                    GAS_FOR_FT_TRANSFER,
+                );
+                self.fee_collected[i] = 0;
+            }
+        }
     }
 
     // ******************* //
@@ -335,25 +348,58 @@ impl Contract {
 
     /// transfers staked tokens (token identified by an index in
     /// self.stake_tokens) back to the user.
-    #[inline]
-    fn return_tokens(&mut self, user: AccountId, token_i: usize, amount: U128) -> Promise {
-        let fee = amount.0 * self.fee_rate / 10_000;
-        self.fee_collected[token_i] += fee;
-        let token = self.stake_tokens[token_i];
+    /// `self.staked_units` must be adjusted in the caller. The callback will fix the
+    /// `self.staked_units` if the transfer will fails.
+    fn transfer_staked_tokens(&mut self, user: AccountId, token_i: usize, amount: u128) -> Promise {
+        if amount == 0 {
+            return Promise::new(user);
+        }
+        self.total_stake[token_i] -= amount;
+        let fee = amount * self.fee_rate / 10_000;
+        let amount = amount - fee;
+        let token = &self.stake_tokens[token_i];
         if token == NEAR_TOKEN {
-            return Promise::new(user).transfer(amount.0);
+            return Promise::new(user).transfer(amount);
         }
 
         return ext_ft::ft_transfer(
             user.clone(),
-            (amount.0 - fee).into(),
+            amount.into(),
             Some("unstaking".to_string()),
-            &token,
+            token,
             1,
             GAS_FOR_FT_TRANSFER,
         )
-        .then(ext_self::return_tokens_callback(
+        .then(ext_self::transfer_staked_callback(
             user,
+            token_i,
+            amount.into(),
+            fee.into(),
+            &env::current_account_id(),
+            0,
+            GAS_FOR_MINT_CALLBACK,
+        ));
+    }
+
+    #[inline]
+    fn transfer_farmed_tokens(&mut self, u: &AccountId, token_i: usize, amount: u128) -> Promise {
+        let token = &self.farm_tokens[token_i];
+        self.total_harvested[token_i] += amount;
+        if token == NEAR_TOKEN {
+            return Promise::new(u.clone()).transfer(amount);
+        }
+
+        let amount: U128 = amount.into();
+        return ext_ft::ft_transfer(
+            u.clone(),
+            amount,
+            Some("farming".to_string()),
+            token,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        )
+        .then(ext_self::transfer_farmed_callback(
+            u.clone(),
             token_i,
             amount,
             &env::current_account_id(),
@@ -362,15 +408,19 @@ impl Contract {
         ));
     }
 
-    // TODO: probably use 2 different functions: one  for stake tokens and another
-    // one for farm tokens.
     #[private]
-    pub fn return_tokens_callback(&mut self, user: AccountId, token_i: usize, amount: U128) {
+    pub fn transfer_staked_callback(
+        &mut self,
+        user: AccountId,
+        token_i: usize,
+        amount: U128,
+        fee: U128,
+    ) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
-                log!("tokens returned {}", amount.0);
+                log!("tokens withdrawn {}", amount.0);
                 // we can't remove the vault here, because we don't know if `mint` succeded
                 //  if it didn't succed, the the mint_callback will try to recover the vault
                 //  and recreate it - so potentially we will send back to the user NEAR deposit
@@ -380,83 +430,39 @@ impl Contract {
 
             PromiseResult::Failed => {
                 log!(
-                    "{} token transfer failed {}. recovering account state",
+                    "transferring {} {} token failed. Recovering account state",
+                    amount.0,
                     self.stake_tokens[token_i],
-                    amount.0
                 );
-                // todo: add token index
-                self.recover_state(&user, 0, amount.0);
+                self.fee_collected[token_i] += fee.0;
+                let full_amount = amount.0 + fee.0;
+                self.total_stake[token_i] -= full_amount;
+                self.recover_state(&user, true, token_i, full_amount);
             }
-        }
-    }
-
-    /** mint `cheddar` rewards for the user and returns `tokens` staked back to the user.
-    / NOTE: the destination account must be registered on CHEDDAR first!
-    / NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the
-    /       call, because in case of failure the callbacks will re-add rewards to the vault */
-    fn mint_cheddar(&mut self, a: &AccountId, cheddar_amount: U128, tokens: U128, close: bool) {
-        if cheddar_amount.0 == 0 && tokens.0 == 0 {
-            // nothing to mint nor return.
-            return;
-        }
-        let mut p: Option<Promise> = None;
-        if cheddar_amount.0 != 0 {
-            p = Some(
-                ext_ft::ft_mint(
-                    a.clone(),
-                    cheddar_amount,
-                    Some("farming".to_string()),
-                    &self.cheddar,
-                    ONE_YOCTO,
-                    GAS_FOR_FT_TRANSFER,
-                )
-                .then(ext_self::mint_callback(
-                    a.clone(),
-                    cheddar_amount,
-                    &env::current_account_id(),
-                    0,
-                    GAS_FOR_MINT_CALLBACK,
-                )),
-            );
-        }
-        if tokens.0 != 0 {
-            let p_return = self.return_tokens(a.clone(), tokens.clone());
-            if let Some(p_mint) = p {
-                p = Some(p_mint.and(p_return));
-            } else {
-                p = Some(p_return);
-            }
-        }
-        if close {
-            p.unwrap().then(ext_self::close_account(
-                a.clone(),
-                &env::current_account_id(),
-                0,
-                GAS_FOR_MINT_CALLBACK,
-            ));
         }
     }
 
     #[private]
-    pub fn mint_callback(&mut self, user: AccountId, amount: U128) {
-        assert!(
-            env::promise_results_count() <= 2,
-            "{}",
-            ERR25_WITHDRAW_CALLBACK
-        );
+    pub fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
+
             PromiseResult::Successful(_) => {
-                log!("cheddar rewards withdrew {}", amount.0);
-                self.total_harvested += amount.0;
+                // see comment in transfer_staked_callback function
             }
+
             PromiseResult::Failed => {
-                log!("cheddar mint failed {}. recovering account state", amount.0);
-                self.recover_state(&user, amount.0, 0);
+                log!(
+                    "harvesting {} {} token failed. recovering account state",
+                    amount.0,
+                    self.stake_tokens[token_i],
+                );
+                self.recover_state(&user, false, token_i, amount.0);
             }
         }
     }
 
+    // TODO: remove?
     #[private]
     pub fn close_account(&mut self, user: AccountId) {
         let mut all_good = true;
@@ -470,7 +476,7 @@ impl Contract {
             return;
         }
         if let Some(v) = self.vaults.get(&user) {
-            if all_zeros(&v.staked) && all_zeros(&v.farmed) {
+            if all_zeros(&v.staked) && v.farmed == 0 {
                 log!("returning storage deposit");
                 self.vaults.remove(&user);
                 self.accounts_registered -= 1;
@@ -479,20 +485,26 @@ impl Contract {
         }
     }
 
-    fn recover_state(&mut self, user: &AccountId, cheddar: u128, staked: u128) {
+    fn recover_state(&mut self, user: &AccountId, is_staked: bool, token_i: usize, amount: u128) {
         let mut v;
         if let Some(v2) = self.vaults.get(&user) {
             v = v2;
-            v.staked += staked;
-            v.farmed += cheddar;
         } else {
             // If the vault was closed before by another TX, then we must recover the state
             self.accounts_registered += 1;
-            v = Vault {
-                reward_acc: self.reward_acc,
-                staked,
-                farmed: cheddar,
+            v = Vault::new(self.stake_tokens.len(), self.reward_acc)
+        }
+        if is_staked {
+            v.staked[token_i] += amount;
+            let s = min_stake(&v.staked, &self.stake_rates);
+            let diff = s - v.min_stake;
+            if diff > 0 {
+                self.staked_units += diff;
             }
+        } else {
+            self.total_harvested[token_i] -= amount;
+            // TODO: mayb we should add a list of harvested tokens which still have to be withdrawn?
+            //     v.farmed[token_i] += amount;
         }
 
         self.vaults.insert(user, &v);
@@ -522,16 +534,8 @@ impl Contract {
 
     /// creates new empty account. User must deposit tokens using transfer_call
     fn create_account(&mut self, user: &AccountId) {
-        self.vaults.insert(
-            &user,
-            &Vault {
-                // warning: previous can be set in the future
-                reward_acc: self.reward_acc,
-                staked: self.farm_token_rates.iter().map(|_| 0).collect(),
-                staked_near: 0,
-                farmed: 0,
-            },
-        );
+        self.vaults
+            .insert(&user, &Vault::new(self.stake_tokens.len(), self.reward_acc));
         self.accounts_registered += 1;
     }
 

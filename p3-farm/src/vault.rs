@@ -29,6 +29,16 @@ pub struct Vault {
 }
 
 impl Vault {
+    pub fn new(staked_len: usize, reward_acc: Balance) -> Self {
+        Self {
+            reward_acc,
+            staked: vec![0; staked_len],
+            min_stake: 0,
+            farmed: 0,
+            round: 0,
+        }
+    }
+
     /**
     Update rewards for locked tokens in past epochs
     Arguments:
@@ -103,7 +113,7 @@ impl Contract {
         if s > v.min_stake {
             let diff = s - v.min_stake;
             v.min_stake = s;
-            self.staked_units += s; // must be called after ping_s
+            self.staked_units += diff; // must be called after ping_s
         }
         self.vaults.insert(sender, &v);
         self.total_stake[token_i] += amount;
@@ -174,8 +184,8 @@ impl StorageManagement for Contract {
         storage_balance()
     }
 
-    /// Close the account (`close()` or `storage_unregister(true)`) to close the account and
-    /// withdraw deposited NEAR.
+    /// Method not supported. Close the account (`close()` or
+    /// `storage_unregister(true)`) to close the account and withdraw deposited NEAR.
     #[allow(unused_variables)]
     fn storage_withdraw(&mut self, amount: Option<U128>) -> StorageBalance {
         panic!("Storage withdraw not possible, close the account instead");
