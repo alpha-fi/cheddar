@@ -24,8 +24,6 @@ pub struct Vault {
     /// farmed units are translated to all `Contract.farm_tokens` based on
     /// `Contract.farm_token_rates`
     pub farmed: Balance,
-    /// round number when the last update was made.
-    pub round: u64,
 }
 
 impl Vault {
@@ -35,21 +33,20 @@ impl Vault {
             staked: vec![0; staked_len],
             min_stake: 0,
             farmed: 0,
-            round: 0,
         }
     }
 
     /**
     Update rewards for locked tokens in past epochs
     Arguments:
-    `s`: Contract.s value
-    `round`: current round
+     - `reward_acc`: Contract.reward_acc value
+     - `round`: current round
      */
     pub fn ping(&mut self, reward_acc: Balance, round: u64) {
         // note: the last round is at self.farming_end
         // if farming didn't start, ignore the rewards update
-        if round == 0 || self.round >= round {
-            return; // 0;
+        if round == 0 {
+            return;
         }
         // no new rewards
         if self.reward_acc >= reward_acc {
@@ -100,23 +97,64 @@ impl Contract {
                 / self.staked_units
     }
 
-    pub(crate) fn stake(&mut self, sender: &AccountId, token: &AccountId, amount: Balance) {
+    /// Returns new stake units
+    pub(crate) fn _stake(
+        &mut self,
+        user: &AccountId,
+        token: &AccountId,
+        amount: Balance,
+    ) -> Balance {
         assert!(amount > 0, "staked amount must be positive");
         let token_i = find_acc_idx(&token, &self.stake_tokens);
-        let mut v = self.get_vault(sender);
+        let mut v = self.get_vault(user);
 
         // firstly update the past rewards
         self.ping_all(&mut v);
-        log!("Staked, {} {}", amount, token);
+
         v.staked[token_i] += amount;
+        self.total_stake[token_i] += amount;
         let s = min_stake(&v.staked, &self.stake_rates);
         if s > v.min_stake {
             let diff = s - v.min_stake;
             v.min_stake = s;
             self.staked_units += diff; // must be called after ping_s
         }
-        self.vaults.insert(sender, &v);
-        self.total_stake[token_i] += amount;
+        self.vaults.insert(user, &v);
+        log!("Staked {} {}, stake_units: {}", amount, token, s);
+        return s;
+    }
+
+    pub(crate) fn _unstake(
+        &mut self,
+        user: &AccountId,
+        token: &AccountId,
+        amount: Balance,
+    ) -> Balance {
+        let token_i = find_acc_idx(token, &self.stake_tokens);
+
+        let mut v = self.get_vault(user);
+        assert!(amount <= v.staked[token_i], "{}", ERR30_NOT_ENOUGH_STAKE);
+        if amount == v.staked.iter().sum() {
+            // no other token is staked,  => close -- simplify UX
+            self.close();
+            return 0;
+        }
+
+        self.ping_all(&mut v);
+        let remaining = v.staked[token_i] - amount;
+        v.staked[token_i] = remaining;
+        self.total_stake[token_i] -= amount;
+
+        let s = min_stake(&v.staked, &self.stake_rates);
+        if s < v.min_stake {
+            let diff = v.min_stake - s;
+            v.min_stake = s;
+            self.staked_units -= diff; // must be called after ping_s
+        }
+
+        self.vaults.insert(user, &v);
+        self.transfer_staked_tokens(user.clone(), token_i, amount);
+        return remaining;
     }
 }
 
@@ -143,7 +181,11 @@ impl FungibleTokenReceiver for Contract {
             "near must be sent using deposit_near()"
         );
         assert!(amount.0 > 0, "staked amount must be positive");
-        self.stake(sender_id.as_ref(), &token, amount.0);
+        if msg == "setup reward deposit" {
+            log!("Setup reward deposit")
+        } else {
+            self._stake(sender_id.as_ref(), &token, amount.0);
+        }
 
         return PromiseOrValue::Value(U128(0));
     }

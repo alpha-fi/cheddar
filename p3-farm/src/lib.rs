@@ -196,8 +196,10 @@ impl Contract {
     #[payable]
     pub fn deposit_near(&mut self) {
         let a = env::predecessor_account_id();
-        self.stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
+        self._stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
     }
+
+    // Staking is done via ft_transfer_call
 
     /// Unstakes given amount of tokens and transfers it back to the user.
     /// If amount equals to the amount staked then we close the account.
@@ -209,33 +211,8 @@ impl Contract {
     pub fn unstake(&mut self, token: ValidAccountId, amount: U128) -> U128 {
         self.assert_is_active();
         assert_one_yocto();
-        let token = token.as_ref();
-        let token_i = find_acc_idx(token, &self.stake_tokens);
-        let amount = amount.0;
-        let a = env::predecessor_account_id();
-        let mut v = self.get_vault(&a);
-
-        assert!(amount <= v.staked[token_i], "{}", ERR30_NOT_ENOUGH_STAKE);
-        if amount == v.staked.iter().sum() {
-            // no other token is staked,  => close -- simplify UX
-            self.close();
-            return 0.into();
-        }
-        self.ping_all(&mut v);
-        let remaining = v.staked[token_i] - amount;
-        v.staked[token_i] = remaining;
-        self.total_stake[token_i] -= amount;
-
-        let s = min_stake(&v.staked, &self.stake_rates);
-        if s < v.min_stake {
-            let diff = v.min_stake - s;
-            v.min_stake = s;
-            self.staked_units -= diff; // must be called after ping_s
-        }
-
-        self.vaults.insert(&a, &v);
-        self.transfer_staked_tokens(a, token_i, amount);
-        return remaining.into();
+        let user = env::predecessor_account_id();
+        self._unstake(&user, token.as_ref(), amount.0).into()
     }
 
     /// Unstakes everything and close the account. Sends all farmed tokens using a ft_transfer
@@ -284,8 +261,8 @@ impl Contract {
 
     /** transfers harvested tokens to the user
     / NOTE: the destination account must be registered on CHEDDAR first!
-    / NOTE: callers of fn mint_cheddar MUST set rewards to zero in the vault prior to the
-    /       call, because in case of failure the callbacks will re-add rewards to the vault */
+    / NOTE: callers MUST set user `vault.farmed_units` to zero prior to the call
+    /       because in case of failure the callbacks will re-add rewards to the vault */
     fn _withdraw_crop(&mut self, user: &AccountId, farmed_units: u128) {
         if farmed_units == 0 {
             // nothing to mint nor return.
@@ -305,7 +282,7 @@ impl Contract {
     /// Withdraws all collected fee to the treasury.
     /// Must make sure treasury is registered
     /// Panics if the collected fees == 0.
-    pub fn withdraw_fee(&mut self) {
+    pub fn withdraw_fees(&mut self) {
         log!("Withdrawing collected fee: {:?} tokens", self.fee_collected);
         for i in 0..self.stake_tokens.len() {
             if self.fee_collected[i] != 0 {
@@ -556,6 +533,7 @@ mod tests {
     use near_sdk::{testing_env, Balance};
     use near_sdk::{MockedBlockchain, ValidatorId};
     use std::convert::TryInto;
+    use std::vec;
 
     use super::*;
 
@@ -563,8 +541,16 @@ mod tests {
         "cheddar".to_string().try_into().unwrap()
     }
 
+    fn acc_farming2() -> ValidAccountId {
+        "cheddar2".to_string().try_into().unwrap()
+    }
+
     fn acc_staking() -> ValidAccountId {
         "atom".try_into().unwrap()
+    }
+
+    fn acc_staking2() -> ValidAccountId {
+        "atom2".try_into().unwrap()
     }
 
     fn acc_user1() -> ValidAccountId {
@@ -596,14 +582,17 @@ mod tests {
         testing_env!(context.build());
         let contract = Contract::new(
             accounts(0), // owner
-            acc_cheddar(),
-            acc_staking(),
-            10 * ROUND, // farming_start
-            20 * ROUND,
-            RATE.into(), // reward rate
+            vec![acc_staking(), acc_staking2()],
+            vec![E24.into(), (E24 / 10).into()], // staking rates
+            vec![acc_cheddar(), acc_farming2()],
+            vec![E24.into(), (4 * E24).into()], // farming rates
+            10 * ROUND,                         // farming_start
+            20 * ROUND,                         // farming end
+            RATE.into(),                        // reward rate
             fee_rate,
-            accounts(1),
+            accounts(1), // treasury
         );
+        contract.check_vectors();
         testing_env!(context
             .predecessor_account_id(predecessor)
             .attached_deposit((deposit_dec).into())
