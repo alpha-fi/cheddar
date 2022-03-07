@@ -17,7 +17,6 @@ pub struct Vault {
     /// Contract.reward_acc value when the last ping was called and rewards calculated
     pub reward_acc: Balance,
     /// amount of staking token locked in this vault
-    // TODO: handle near update here!
     pub staked: Vec<Balance>,
     pub min_stake: Balance,
     /// Amount of accumulated, not withdrawn farmed units. When withdrawing the
@@ -174,7 +173,6 @@ impl FungibleTokenReceiver for Contract {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
-        self.assert_is_active();
         let token = env::predecessor_account_id();
         assert!(
             token != NEAR_TOKEN,
@@ -182,8 +180,17 @@ impl FungibleTokenReceiver for Contract {
         );
         assert!(amount.0 > 0, "staked amount must be positive");
         if msg == "setup reward deposit" {
-            log!("Setup reward deposit")
+            assert!(
+                !self.setup_finalized,
+                "setup deposits must be done when contract setup is not finalized"
+            );
+            log!("Setup reward deposit, token: {}", token);
+            let token_i = find_acc_idx(&token, &self.stake_tokens);
+            self.farm_deposits[token_i] += amount.0;
+            // TODO: desactivate and when activating check that all deposits are done correctly.
+            // or maybe here - assert that the deposit is correct
         } else {
+            self.assert_is_active();
             self._stake(sender_id.as_ref(), &token, amount.0);
         }
 

@@ -13,7 +13,13 @@ Blockchain"](https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a
 
 - Round duration: 1 minute
 
-## Flow
+## Setup
+
+1. Deploy contract
+2. Deposit required NEP-141 tokens (`farm_tokens`)
+3. Activate by calling `finalize_setup()`. Must be done at least 12h before opening the farm.
+
+## User Flow
 
 Let's define a common variables:
 
@@ -26,7 +32,7 @@ CHEDDAR=token.cheddar.testnet
 STAKEING_TOKEN=abc.testnet
 ```
 
-1. Register to the farm:
+1. Register in the farm:
 
    ```
    near call $FARM storage_deposit '{}' --accountId me.testnet --deposit 0.05

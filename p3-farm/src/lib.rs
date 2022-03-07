@@ -29,6 +29,7 @@ near_sdk::setup_alloc!();
 pub struct Contract {
     /// if farming is opened
     pub is_active: bool,
+    pub setup_finalized: bool,
     pub owner_id: AccountId,
     /// Treasury address - a destination for the collected fees.
     pub treasury: AccountId,
@@ -51,6 +52,8 @@ pub struct Contract {
     /// amount of $farm_unit farmed during each round. Round duration is defined in constants.rs
     /// Farmed $farm_units are distributed to all users proportionally to their stake.
     pub farm_unit_rate: u128,
+    /// received farming reward deposits
+    pub farm_deposits: Vec<u128>,
     /// unix timestamp (seconds) when the farming starts.
     pub farming_start: u64,
     /// unix timestamp (seconds) when the farming ends (first time with no farming).
@@ -83,6 +86,8 @@ impl Contract {
     /// * `reward_rate` is amount of yoctoCheddars per 1e24 staked tokens (usually tokens are
     ///    denominated in 1e24 on NEAR).
     /// * `fee_rate`: the Contract.fee parameter (in basis points)
+    /// The farm starts desactivated. To activate, you must send required farming deposits and
+    /// call `self.finalize_setup()`.
     #[init]
     pub fn new(
         owner_id: ValidAccountId,
@@ -103,8 +108,10 @@ impl Contract {
             "farm_token_rates[0] must be 1e24"
         );
         let stake_len = stake_tokens.len();
+        let farm_len = farm_tokens.len();
         let c = Self {
             is_active: true,
+            setup_finalized: false,
             owner_id: owner_id.into(),
             treasury: treasury.into(),
             vaults: LookupMap::new(b"v".to_vec()),
@@ -114,9 +121,10 @@ impl Contract {
             farm_tokens: farm_tokens.iter().map(|x| x.to_string()).collect(),
             farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
             farm_unit_rate: farm_unit_rate.0,
+            farm_deposits: vec![0; farm_len],
             farming_start,
             farming_end,
-            total_harvested: vec![0; farm_tokens.len()],
+            total_harvested: vec![0; farm_len],
             reward_acc: 0,
             reward_acc_round: 0,
             total_stake: vec![0; stake_len],
@@ -134,7 +142,8 @@ impl Contract {
         assert!(
             fl == self.farm_token_rates.len()
                 && fl == self.total_harvested.len()
-                && fl == self.fee_collected.len(),
+                && fl == self.fee_collected.len()
+                && fl == self.farm_deposits.len(),
             "farm token vector length is not correct"
         );
         assert!(
@@ -316,10 +325,25 @@ impl Contract {
         self.farming_end = end;
     }
 
+    pub fn finalize_setup(&mut self) {
+        assert!(
+            !self.setup_finalized,
+            "setup deposits must be done when contract setup is not finalized"
+        );
+        let now = env::block_timestamp() / SECOND;
+        assert!(
+            now < self.farming_start - 12 * 3600,
+            "must be finalized at last 12j before farm start"
+        );
+        // TODO: verify that all deposits are done
+        self.setup_finalized = true;
+    }
+
     /*****************
      * internal methods */
 
     fn assert_is_active(&self) {
+        assert!(self.setup_finalized, "contract is not setup yet");
         assert!(self.is_active, "contract is not active");
     }
 
@@ -439,28 +463,28 @@ impl Contract {
         }
     }
 
-    // TODO: remove?
-    #[private]
-    pub fn close_account(&mut self, user: AccountId) {
-        let mut all_good = true;
-        for i in 0..env::promise_results_count() {
-            match env::promise_result(i) {
-                PromiseResult::Failed => all_good = false,
-                _ => {}
-            }
-        }
-        if !all_good {
-            return;
-        }
-        if let Some(v) = self.vaults.get(&user) {
-            if all_zeros(&v.staked) && v.farmed == 0 {
-                log!("returning storage deposit");
-                self.vaults.remove(&user);
-                self.accounts_registered -= 1;
-                Promise::new(user).transfer(STORAGE_COST);
-            }
-        }
-    }
+    // // TODO: remove?
+    // #[private]
+    // pub fn close_account(&mut self, user: AccountId) {
+    //     let mut all_good = true;
+    //     for i in 0..env::promise_results_count() {
+    //         match env::promise_result(i) {
+    //             PromiseResult::Failed => all_good = false,
+    //             _ => {}
+    //         }
+    //     }
+    //     if !all_good {
+    //         return;
+    //     }
+    //     if let Some(v) = self.vaults.get(&user) {
+    //         if all_zeros(&v.staked) && v.farmed == 0 {
+    //             log!("returning storage deposit");
+    //             self.vaults.remove(&user);
+    //             self.accounts_registered -= 1;
+    //             Promise::new(user).transfer(STORAGE_COST);
+    //         }
+    //     }
+    // }
 
     fn recover_state(&mut self, user: &AccountId, is_staked: bool, token_i: usize, amount: u128) {
         let mut v;
@@ -480,7 +504,7 @@ impl Contract {
             }
         } else {
             self.total_harvested[token_i] -= amount;
-            // TODO: mayb we should add a list of harvested tokens which still have to be withdrawn?
+            // TODO: maybe we should add a list of harvested tokens which still have to be withdrawn?
             //     v.farmed[token_i] += amount;
         }
 
