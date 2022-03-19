@@ -92,7 +92,7 @@ impl Contract {
         }
 
         self.reward_acc
-            + u128::from(round - self.reward_acc_round) * self.farm_unit_rate * ACC_OVERFLOW
+            + u128::from(round - self.reward_acc_round) * self.farm_unit_emission * ACC_OVERFLOW
                 / self.staked_units
     }
 
@@ -161,11 +161,16 @@ impl Contract {
 #[near_bindgen]
 impl FungibleTokenReceiver for Contract {
     /**
-    FungibleTokenReceiver implementation
-    Callback on receiving tokens by this contract.
-    Automatically stakes receiving tokens.
+    FungibleTokenReceiver implementation Callback on receiving tokens by this contract.
+    Handles both farm deposits and stake deposits. For farm deposit (sending tokens
+    to setup the farm) you must set "setup reward deposit" msg.
+    Otherwise tokens will be staken.
     Returns zero.
-    Panics when account is not registered or when receiving a wrong token. */
+    Panics when:
+    - account is not registered
+    - or receiving a wrong token
+    - or making a farm deposit after farm is finalized
+    - or staking before farm is finalized. */
     #[allow(unused_variables)]
     fn ft_on_transfer(
         &mut self,
@@ -180,15 +185,7 @@ impl FungibleTokenReceiver for Contract {
         );
         assert!(amount.0 > 0, "staked amount must be positive");
         if msg == "setup reward deposit" {
-            assert!(
-                !self.setup_finalized,
-                "setup deposits must be done when contract setup is not finalized"
-            );
-            log!("Setup reward deposit, token: {}", token);
-            let token_i = find_acc_idx(&token, &self.stake_tokens);
-            self.farm_deposits[token_i] += amount.0;
-            // TODO: desactivate and when activating check that all deposits are done correctly.
-            // or maybe here - assert that the deposit is correct
+            self._setup_deposit(&token, amount.0);
         } else {
             self.assert_is_active();
             self._stake(sender_id.as_ref(), &token, amount.0);

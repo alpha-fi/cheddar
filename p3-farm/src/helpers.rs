@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, Balance};
 
@@ -40,4 +42,23 @@ pub fn all_zeros(v: &Vec<Balance>) -> bool {
         }
     }
     return true;
+}
+
+/// computes round number based on timestamp in nanoseconds
+pub fn round_number(start: u64, end: u64, now: u64) -> u64 {
+    let mut now = now / SECOND;
+    if now < start {
+        return 0;
+    }
+    // we start rounds from 0
+    let mut adjust = 0;
+    if now >= end {
+        now = end;
+        // if at the end of farming we don't start a new round then we need to force a new round
+        if now % ROUND != 0 {
+            adjust = 1
+        };
+    }
+    let r: u64 = ((now - start) / ROUND).try_into().unwrap();
+    r + adjust
 }

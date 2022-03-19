@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{ValidAccountId, U128};
@@ -38,9 +36,9 @@ pub struct Contract {
     pub stake_tokens: Vec<AccountId>,
     /// total number of units currently staked
     pub staked_units: Balance,
-    /// Rate between the staking token and cheddar in 1e24.
-    /// When farming the `min(staking_token*stake_rate/1e24)` is taken
-    /// for farming stake.
+    /// Rate between the staking token and stake units.
+    /// When farming the `min(staking_token[i]*stake_rate[i]/1e24)` is taken
+    /// to allocate farm_units.
     /// Cheddar should be the first stake token.
     pub stake_rates: Vec<u128>,
     pub farm_tokens: Vec<AccountId>,
@@ -49,10 +47,10 @@ pub struct Contract {
     /// a user `vault.farmed*farm_token_rates[i]/1e24`.
     /// Farmed tokens are distributed to all users proportionally to their stake.
     pub farm_token_rates: Vec<u128>,
-    /// amount of $farm_unit farmed during each round. Round duration is defined in constants.rs
+    /// amount of $farm_units farmed during each round. Round duration is defined in constants.rs
     /// Farmed $farm_units are distributed to all users proportionally to their stake.
-    pub farm_unit_rate: u128,
-    /// received farming reward deposits
+    pub farm_unit_emission: u128,
+    /// received deposits for farming reward
     pub farm_deposits: Vec<u128>,
     /// unix timestamp (seconds) when the farming starts.
     pub farming_start: u64,
@@ -120,7 +118,7 @@ impl Contract {
             stake_rates: stake_rates.iter().map(|x| x.0).collect(),
             farm_tokens: farm_tokens.iter().map(|x| x.to_string()).collect(),
             farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
-            farm_unit_rate: farm_unit_rate.0,
+            farm_unit_emission: farm_unit_rate.0,
             farm_deposits: vec![0; farm_len],
             farming_start,
             farming_end,
@@ -142,7 +140,6 @@ impl Contract {
         assert!(
             fl == self.farm_token_rates.len()
                 && fl == self.total_harvested.len()
-                && fl == self.fee_collected.len()
                 && fl == self.farm_deposits.len(),
             "farm token vector length is not correct"
         );
@@ -200,15 +197,42 @@ impl Contract {
     // ******************* //
     // transaction methods //
 
+    pub(crate) fn _setup_deposit(&mut self, token: &AccountId, amount: u128) {
+        assert!(
+            !self.setup_finalized,
+            "setup deposits must be done when contract setup is not finalized"
+        );
+        let token_i = find_acc_idx(token, &self.stake_tokens);
+        let total_rounds = round_number(self.farming_start, self.farming_end, self.farming_end);
+        let expected = u128::from(total_rounds) * self.farm_unit_emission;
+        assert_eq!(
+            self.farm_deposits[token_i], 0,
+            "deposit already done for the given token"
+        );
+        assert_eq!(
+            amount, expected,
+            "Expected deposit for token {} is {}, got {}",
+            self.farm_tokens[token_i], expected, self.farm_deposits[token_i]
+        );
+        self.farm_deposits[token_i] += amount;
+    }
+
+    /// Deposit native near during the setup phase for farming rewards.
+    /// Panics when the deposit was already done or the setup is completed.
+    #[payable]
+    pub fn setup_deposit_near(&mut self) {
+        self._setup_deposit(&NEAR_TOKEN.to_string(), env::attached_deposit())
+    }
+
     /// stakes native near.
     /// The transaction fails if near is not included in `self.stake_amount`.
     #[payable]
-    pub fn deposit_near(&mut self) {
+    pub fn stake_near(&mut self) {
         let a = env::predecessor_account_id();
         self._stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
     }
 
-    // Staking is done via ft_transfer_call
+    // NEP-141 token staking is done via ft_transfer_call
 
     /// Unstakes given amount of tokens and transfers it back to the user.
     /// If amount equals to the amount staked then we close the account.
@@ -333,9 +357,15 @@ impl Contract {
         let now = env::block_timestamp() / SECOND;
         assert!(
             now < self.farming_start - 12 * 3600,
-            "must be finalized at last 12j before farm start"
+            "must be finalized at last 12h before farm start"
         );
-        // TODO: verify that all deposits are done
+        for i in 0..self.farm_deposits.len() {
+            assert_ne!(
+                self.farm_deposits[i], 0,
+                "Deposit for token {} not done",
+                self.farm_tokens[i]
+            )
+        }
         self.setup_finalized = true;
     }
 
@@ -516,21 +546,7 @@ impl Contract {
     /// If now == start return 0.
     /// if now == start + ROUND return 1...
     fn current_round(&self) -> u64 {
-        let mut now = env::block_timestamp() / SECOND;
-        if now < self.farming_start {
-            return 0;
-        }
-        // we start rounds from 0
-        let mut adjust = 0;
-        if now >= self.farming_end {
-            now = self.farming_end;
-            // if at the end of farming we don't start a new round then we need to force a new round
-            if now % ROUND != 0 {
-                adjust = 1
-            };
-        }
-        let r: u64 = ((now - self.farming_start) / ROUND).try_into().unwrap();
-        r + adjust
+        round_number(self.farming_start, self.farming_end, env::block_timestamp())
     }
 
     /// creates new empty account. User must deposit tokens using transfer_call
