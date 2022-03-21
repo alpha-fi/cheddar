@@ -44,9 +44,8 @@ pub fn all_zeros(v: &Vec<Balance>) -> bool {
     return true;
 }
 
-/// computes round number based on timestamp in nanoseconds
-pub fn round_number(start: u64, end: u64, now: u64) -> u64 {
-    let mut now = now / SECOND;
+/// computes round number based on timestamp in seconds
+pub fn round_number(start: u64, end: u64, mut now: u64) -> u64 {
     if now < start {
         return 0;
     }

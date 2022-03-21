@@ -91,11 +91,11 @@ impl Contract {
         owner_id: ValidAccountId,
         stake_tokens: Vec<ValidAccountId>,
         stake_rates: Vec<U128>,
+        farm_unit_emission: U128,
         farm_tokens: Vec<ValidAccountId>,
         farm_token_rates: Vec<U128>,
         farming_start: u64,
         farming_end: u64,
-        farm_unit_rate: U128,
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
@@ -118,7 +118,7 @@ impl Contract {
             stake_rates: stake_rates.iter().map(|x| x.0).collect(),
             farm_tokens: farm_tokens.iter().map(|x| x.to_string()).collect(),
             farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
-            farm_unit_emission: farm_unit_rate.0,
+            farm_unit_emission: farm_unit_emission.0,
             farm_deposits: vec![0; farm_len],
             farming_start,
             farming_end,
@@ -186,7 +186,8 @@ impl Contract {
                     .collect();
                 return Some(Status {
                     stake_tokens: to_u128_vec(&v.staked),
-                    farmed,
+                    farmed_units: v.farmed.into(),
+                    farmed_tokens: farmed,
                     timestamp: self.farming_start + r0 * ROUND,
                 });
             }
@@ -202,7 +203,7 @@ impl Contract {
             !self.setup_finalized,
             "setup deposits must be done when contract setup is not finalized"
         );
-        let token_i = find_acc_idx(token, &self.stake_tokens);
+        let token_i = find_acc_idx(token, &self.farm_tokens);
         let total_rounds = round_number(self.farming_start, self.farming_end, self.farming_end);
         let expected = u128::from(total_rounds) * self.farm_unit_emission;
         assert_eq!(
@@ -212,7 +213,7 @@ impl Contract {
         assert_eq!(
             amount, expected,
             "Expected deposit for token {} is {}, got {}",
-            self.farm_tokens[token_i], expected, self.farm_deposits[token_i]
+            self.farm_tokens[token_i], expected, amount
         );
         self.farm_deposits[token_i] += amount;
     }
@@ -546,7 +547,11 @@ impl Contract {
     /// If now == start return 0.
     /// if now == start + ROUND return 1...
     fn current_round(&self) -> u64 {
-        round_number(self.farming_start, self.farming_end, env::block_timestamp())
+        round_number(
+            self.farming_start,
+            self.farming_end,
+            env::block_timestamp() / SECOND,
+        )
     }
 
     /// creates new empty account. User must deposit tokens using transfer_call

@@ -62,9 +62,9 @@ pub struct ContractParams {
 
 #[derive(Deserialize, Serialize)]
 pub struct Status {
-    // TODO: decided what to do with NEAR
     pub stake_tokens: Vec<U128>,
-    pub farmed: Vec<U128>,
+    pub farmed_units: U128,
+    pub farmed_tokens: Vec<U128>,
     /// timestamp of the current round.
     pub timestamp: u64,
 }
