@@ -160,6 +160,7 @@ impl Contract {
             owner_id: self.owner_id.clone(),
             stake_tokens: self.stake_tokens.clone(),
             stake_rates: to_u128_vec(&self.stake_rates),
+            farm_unit_emission: self.farm_unit_emission.into(),
             farm_tokens: self.farm_tokens.clone(),
             farm_token_rates: to_u128_vec(&self.farm_token_rates),
             is_active: self.is_active,
