@@ -631,7 +631,7 @@ mod tests {
             to_U128s(&vec![E24, E24 / 10]),      // staking rates
             RATE.into(),                         // farm_unit_emission
             vec![acc_cheddar(), acc_farming2()], // farming tokens
-            to_U128s(&vec![2 * E24, E24 / 2]),   // farming rates
+            to_U128s(&vec![E24, E24 / 2]),       // farming rates
             10 * ROUND,                          // farming_start
             20 * ROUND,                          // farming end
             fee_rate,
@@ -640,7 +640,7 @@ mod tests {
         contract.check_vectors();
         testing_env!(context
             .predecessor_account_id(predecessor)
-            .attached_deposit((deposit_dec).into())
+            .attached_deposit(deposit_dec.into())
             .block_timestamp(round * B_ROUND)
             .build());
         (context, contract)
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "The attached deposit is less than the minimum storage balance (50000000000000000000000)"
+        expected = "The attached deposit is less than the minimum storage balance (60000000000000000000000)"
     )]
     fn test_min_storage_deposit() {
         let (mut ctx, mut ctr) = setup_contract(acc_user1(), 0, 1, 0);
