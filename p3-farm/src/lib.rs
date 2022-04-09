@@ -157,15 +157,15 @@ impl Contract {
         ContractParams {
             owner_id: self.owner_id.clone(),
             stake_tokens: self.stake_tokens.clone(),
-            stake_rates: to_u128_vec(&self.stake_rates),
+            stake_rates: to_U128s(&self.stake_rates),
             farm_unit_emission: self.farm_unit_emission.into(),
             farm_tokens: self.farm_tokens.clone(),
-            farm_token_rates: to_u128_vec(&self.farm_token_rates),
+            farm_token_rates: to_U128s(&self.farm_token_rates),
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
-            total_staked: to_u128_vec(&self.total_stake),
-            total_farmed: to_u128_vec(&self.total_harvested),
+            total_staked: to_U128s(&self.total_stake),
+            total_farmed: to_U128s(&self.total_harvested),
             fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
         }
@@ -184,7 +184,7 @@ impl Contract {
                     .map(|ra| U128::from(farmed_tokens(v.farmed, *ra)))
                     .collect();
                 return Some(Status {
-                    stake_tokens: to_u128_vec(&v.staked),
+                    stake_tokens: to_U128s(&v.staked),
                     farmed_units: v.farmed.into(),
                     farmed_tokens: farmed,
                     timestamp: self.farming_start + r0 * ROUND,
@@ -309,7 +309,7 @@ impl Contract {
 
     /// Returns the amount of collected fees which are not withdrawn yet.
     pub fn get_collected_fee(&self) -> Vec<U128> {
-        to_u128_vec(&self.fee_collected)
+        to_U128s(&self.fee_collected)
     }
 
     /// Withdraws all collected fee to the treasury.
@@ -628,12 +628,12 @@ mod tests {
         let contract = Contract::new(
             accounts(0), // owner
             vec![acc_staking(), acc_staking2()],
-            to_u128_vec(&vec![E24, E24 / 10]),    // staking rates
-            RATE.into(),                          // farm_unit_emission
-            vec![acc_cheddar(), acc_farming2()],  // farming tokens
-            to_u128_vec(&vec![2 * E24, E24 / 2]), // farming rates
-            10 * ROUND,                           // farming_start
-            20 * ROUND,                           // farming end
+            to_U128s(&vec![E24, E24 / 10]),      // staking rates
+            RATE.into(),                         // farm_unit_emission
+            vec![acc_cheddar(), acc_farming2()], // farming tokens
+            to_U128s(&vec![2 * E24, E24 / 2]),   // farming rates
+            10 * ROUND,                          // farming_start
+            20 * ROUND,                          // farming end
             fee_rate,
             accounts(1), // treasury
         );

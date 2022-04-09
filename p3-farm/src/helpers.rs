@@ -16,7 +16,8 @@ pub fn farmed_tokens(units: Balance, rate: Balance) -> Balance {
     (U256::from(units) * U256::from(rate) / e24_big).as_u128()
 }
 
-pub fn to_u128_vec(v: &Vec<Balance>) -> Vec<U128> {
+#[allow(non_snake_case)]
+pub fn to_U128s(v: &Vec<Balance>) -> Vec<U128> {
     v.iter().map(|x| U128::from(*x)).collect()
 }
 
