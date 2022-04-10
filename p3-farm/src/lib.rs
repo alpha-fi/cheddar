@@ -684,16 +684,20 @@ mod tests {
         ctr.set_active(false);
     }
 
+    fn finalize(ctr: &mut Contract) {
+        ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
+        ctr._setup_deposit(&acc_farming2().into(), 10 * E24);
+        ctr.finalize_setup();
+    }
+
     #[test]
     fn test_finalize_setup() {
-        let (mut ctx, mut ctr) = setup_contract(accounts(1), 0, 1, 0);
+        let (_, mut ctr) = setup_contract(accounts(1), 0, 1, 0);
         assert_eq!(
             ctr.setup_finalized, false,
             "at the beginning setup mut not be finalized"
         );
-        ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
-        ctr._setup_deposit(&acc_farming2().into(), 10 * E24);
-        ctr.finalize_setup();
+        finalize(&mut ctr);
         assert_eq!(ctr.setup_finalized, true)
     }
 
@@ -781,36 +785,42 @@ mod tests {
 
     #[test]
     fn test_staking() {
-        let user = acc_u1();
-        let user_a: AccountId = user.clone().into();
-        let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
+        let u1 = acc_u1();
+        let u1_a: AccountId = u1.clone().into();
+        let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 1, 0);
         assert_eq!(
             ctr.total_stake,
             vec![0, 0],
             "at the beginning there should be 0 total stake"
         );
+        finalize(&mut ctr);
 
-        // register an account
+        assert!(
+            ctr.status(u1_a.clone()).is_none(),
+            "u1 is not registered yet"
+        );
+
+        // register user1 account
         testing_env!(ctx.attached_deposit(STORAGE_COST).build());
         ctr.storage_deposit(None, None);
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(to_u128s(&a1.stake_tokens), vec![0, 0], "a1 didn't stake");
+
+        // ------------------------------------------------
+        // stake before farming_start
+        stake(&mut ctx, &mut ctr, &u1, E24, 1);
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(to_u128s(&a1.stake_tokens), vec![E24, 0], "a1 didn't stake");
+        assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
+        assert_eq!(
+            ctr.total_stake,
+            vec![E24, 0],
+            "total stake should equal to account1 stake"
+        );
 
         // setup
         /*
 
-        // ------------------------------------------------
-        // stake before farming_start
-        stake(&mut ctx, &mut ctr, &user, E24, 1);
-        let a1 = ctr.status(get_acc(2)).unwrap();
-        assert_eq!(to_u128s(&a1.stake_tokens), vec![0, 0], "a1 didn't stake");
-        assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
-
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, E24, "user stake");
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to account1 stake"
-        );
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
 
         // ------------------------------------------------
         // stake one more time before farming_start
