@@ -657,16 +657,17 @@ mod tests {
     fn stake(
         ctx: &mut VMContextBuilder,
         ctr: &mut Contract,
-        a: &ValidAccountId,
+        user: &ValidAccountId,
+        token: &ValidAccountId,
         amount: u128,
         epoch: u64,
     ) {
         testing_env!(ctx
             .attached_deposit(0)
-            .predecessor_account_id(acc_staking1())
+            .predecessor_account_id(token.clone())
             .block_timestamp(epoch * ROUND_NS)
             .build());
-        ctr.ft_on_transfer(a.clone(), amount.into(), "transfer to farm".to_string());
+        ctr.ft_on_transfer(user.clone(), amount.into(), "transfer to farm".to_string());
     }
 
     #[test]
@@ -787,6 +788,10 @@ mod tests {
     fn test_staking() {
         let u1 = acc_u1();
         let u1_a: AccountId = u1.clone().into();
+        let u2 = acc_u2();
+        let u2_a: AccountId = u2.clone().into();
+        let t_s1 = acc_staking1(); // token 1
+        let t_s2 = acc_staking2();
         let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 1, 0);
         assert_eq!(
             ctr.total_stake,
@@ -803,19 +808,103 @@ mod tests {
         // register user1 account
         testing_env!(ctx.attached_deposit(STORAGE_COST).build());
         ctr.storage_deposit(None, None);
-        let a1 = ctr.status(u1_a.clone()).unwrap();
+        let mut a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(to_u128s(&a1.stake_tokens), vec![0, 0], "a1 didn't stake");
 
         // ------------------------------------------------
         // stake before farming_start
-        stake(&mut ctx, &mut ctr, &u1, E24, 1);
-        let a1 = ctr.status(u1_a.clone()).unwrap();
-        assert_eq!(to_u128s(&a1.stake_tokens), vec![E24, 0], "a1 didn't stake");
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, E24, 1);
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        let mut a1_stake = vec![E24, 0];
+        assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
         assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
         assert_eq!(
-            ctr.total_stake,
-            vec![E24, 0],
+            ctr.total_stake, a1_stake,
             "total stake should equal to account1 stake"
+        );
+
+        // ------------------------------------------------
+        // stake one more time before farming_start
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, 3 * E24, 2);
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24, 2);
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        a1_stake = vec![4 * E24, 2 * E24];
+        assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
+        assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
+        assert_eq!(
+            ctr.total_stake, a1_stake,
+            "total stake should equal to account1 stake"
+        );
+
+        // ------------------------------------------------
+        // Staking before the beginning won't yield rewards
+        testing_env!(ctx.block_timestamp(10 * ROUND_NS - 1).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(
+            to_u128s(&a1.stake_tokens),
+            a1_stake,
+            "account1 stake didn't change"
+        );
+        assert_eq!(
+            a1.farmed_units.0, 0,
+            "no farmed_units should be rewarded before start"
+        );
+
+        // ------------------------------------------------
+        // The first round already reward - a whole epoch needs to pass first
+        testing_env!(ctx.block_timestamp(10 * ROUND_NS + 1).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
+
+        // ------------------------------------------------
+        // WE are alone - we should get 100% of emission.
+
+        testing_env!(ctx.block_timestamp(12 * ROUND_NS).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(
+            to_u128s(&a1.stake_tokens),
+            a1_stake,
+            "account1 stake didn't change"
+        );
+        assert_eq!(a1.farmed_units.0, 2 * RATE, "we take all harvest");
+
+        // ------------------------------------------------
+        // second check in same epoch shouldn't change rewards
+        testing_env!(ctx.block_timestamp(12 * ROUND_NS + 100).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(
+            a1.farmed_units.0,
+            2 * RATE,
+            "in the same epoch we should harvest only once"
+        );
+
+        // ------------------------------------------------
+        // 1 epoch later user2 stake
+        // firstly register u2 account
+        testing_env!(ctx
+            .attached_deposit(STORAGE_COST)
+            .predecessor_account_id(u2.clone())
+            .build());
+        ctr.storage_deposit(None, None);
+
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, 4 * E24, 13);
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        testing_env!(ctx.block_timestamp(13 * ROUND_NS + 100).build());
+        assert_eq!(
+            to_u128s(&a1.stake_tokens),
+            a1_stake,
+            "account1 stake didn't change"
+        );
+        assert_eq!(
+            a1.farmed_units.0,
+            3 * RATE,
+            "adding new stake doesn't change current issuance"
+        );
+        let mut a2 = ctr.status(u2_a.clone()).unwrap();
+        assert_eq!(
+            to_u128s(&a2.stake_tokens),
+            vec![0, 4 * E24],
+            "account2 stake got updated"
         );
 
         // setup
@@ -823,68 +912,8 @@ mod tests {
 
 
         // ------------------------------------------------
-        // stake one more time before farming_start
-        stake(&mut ctx, &mut ctr, &user, 3 * E24, 2);
-
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 4 * E24, "user stake increased");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to the user stake"
-        );
-
-        // ------------------------------------------------
-        // Staking before the beginning won't yield rewards
-        testing_env!(ctx.block_timestamp(10 * ROUND_NS - 1).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 0, "no cheddar should be rewarded before start");
-
-        // ------------------------------------------------
-        // The first round already reward - a whole epoch needs to pass first
-        testing_env!(ctx.block_timestamp(10 * ROUND_NS + 1).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
-        assert_eq!(
-            a1_r.0, 0,
-            "no cheddar should be rewarded during the first round"
-        );
-
-        // ------------------------------------------------
-        // WE are alone - we should get 100% of emission.
-
-        testing_env!(ctx.block_timestamp(12 * ROUND_NS).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, 2 * RATE, "we take all harvest");
-
-        // ------------------------------------------------
-        // second check in same epoch shouldn't change rewards
-        testing_env!(ctx.block_timestamp(12 * ROUND_NS + 100).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 4 * E24, "account1 stake didn't change");
-        assert_eq!(
-            a1_r.0,
-            2 * RATE,
-            "in the same epoch we should harvest only once"
-        );
-
-        // ------------------------------------------------
-        // 2 epochs later user1 stake
-        stake(&mut ctx, &mut ctr, &user, a1_s.0, 13);
-        testing_env!(ctx.block_timestamp(13 * ROUND_NS + 100).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
-        assert_eq!(
-            a1_r.0,
-            3 * RATE,
-            "adding new stake shouldn't change issuance in 'self farmin' scenario"
-        );
-
-        // ------------------------------------------------
         // User who didn't stake should have zero rewards
-        let user2 = acc_user2();
+        // let user2 = acc_user2();
         let user2_a: AccountId = user2.clone().into();
         let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
         assert_eq!(a2_s.0, 0, "account2 stake should be zero");
