@@ -621,12 +621,11 @@ mod tests {
     /// half of the block round
     // const ROUND_NS_H: u64 = ROUND_NS / 2;
     /// first and last round
-    const START: i64 = 10;
-    const END: i64 = 20;
+    const END: i64 = 10;
     const RATE: u128 = E24 * 2; // 2 farming_units / round (60s)
 
     fn round(r: i64) -> u64 {
-        let r: u64 = (START + r).try_into().unwrap();
+        let r: u64 = (10 + r).try_into().unwrap();
         return r * ROUND_NS;
     }
 
@@ -645,7 +644,7 @@ mod tests {
             RATE.into(),                         // farm_unit_emission
             vec![acc_cheddar(), acc_farming2()], // farming tokens
             to_U128s(&vec![E24, E24 / 2]),       // farming rates
-            round(START) / SECOND,
+            round(0) / SECOND,
             round(END) / SECOND,
             fee_rate,
             accounts(1), // treasury
@@ -654,7 +653,7 @@ mod tests {
         testing_env!(context
             .predecessor_account_id(predecessor)
             .attached_deposit(deposit_dec.into())
-            .block_timestamp(round(-START))
+            .block_timestamp(round(-10))
             .build());
         (context, contract)
     }
@@ -739,7 +738,7 @@ mod tests {
         assert_eq!(ctr.current_round(), 0);
 
         assert_eq!(round(-9), ROUND_NS);
-        assert_eq!(ctr.farming_start, 10 * ROUND_NS);
+        assert_eq!(ctr.farming_start, 10 * ROUND);
 
         testing_env!(ctx.block_timestamp(round(-2)).build());
         assert_eq!(ctr.current_round(), 0);
