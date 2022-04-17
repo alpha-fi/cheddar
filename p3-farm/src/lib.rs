@@ -610,6 +610,7 @@ mod tests {
         "user2".try_into().unwrap()
     }
 
+    #[allow(dead_code)]
     fn acc_u3() -> ValidAccountId {
         "user3".try_into().unwrap()
     }
@@ -665,12 +666,10 @@ mod tests {
         user: &ValidAccountId,
         token: &ValidAccountId,
         amount: u128,
-        epoch: u64,
     ) {
         testing_env!(ctx
             .attached_deposit(0)
             .predecessor_account_id(token.clone())
-            .block_timestamp(epoch * ROUND_NS)
             .build());
         ctr.ft_on_transfer(user.clone(), amount.into(), "transfer to farm".to_string());
     }
@@ -818,7 +817,8 @@ mod tests {
 
         // ------------------------------------------------
         // stake before farming_start
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, E24, 1);
+        testing_env!(ctx.block_timestamp(round(-3)).build());
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, E24);
         a1 = ctr.status(u1_a.clone()).unwrap();
         let mut a1_stake = vec![E24, 0];
         assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
@@ -830,8 +830,9 @@ mod tests {
 
         // ------------------------------------------------
         // stake one more time before farming_start
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, 3 * E24, 2);
-        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24, 2);
+        testing_env!(ctx.block_timestamp(round(-2)).build());
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, 3 * E24);
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24);
         a1 = ctr.status(u1_a.clone()).unwrap();
         a1_stake = vec![4 * E24, 2 * E24];
         assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
@@ -843,7 +844,7 @@ mod tests {
 
         // ------------------------------------------------
         // Staking before the beginning won't yield rewards
-        testing_env!(ctx.block_timestamp(10 * ROUND_NS - 1).build());
+        testing_env!(ctx.block_timestamp(round(0) - 1).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             to_u128s(&a1.stake_tokens),
@@ -857,14 +858,14 @@ mod tests {
 
         // ------------------------------------------------
         // First round - a whole epoch needs to pass first to get first rewards
-        testing_env!(ctx.block_timestamp(10 * ROUND_NS + 1).build());
+        testing_env!(ctx.block_timestamp(round(0) + 1).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
-        assert_eq!(a1.farmed_units.0, 0, "a1 didn't stake so no cheddar");
+        assert_eq!(a1.farmed_units.0, 0, "need to stake whole round to farm");
 
         // ------------------------------------------------
         // 3rd round. We are alone - we should get 100% of emission of first 2 rounds.
 
-        testing_env!(ctx.block_timestamp(12 * ROUND_NS).build());
+        testing_env!(ctx.block_timestamp(round(2)).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             to_u128s(&a1.stake_tokens),
@@ -876,7 +877,7 @@ mod tests {
         // ------------------------------------------------
         // middle of the 3rd round.
         // second check in same epoch shouldn't change rewards
-        testing_env!(ctx.block_timestamp(12 * ROUND_NS + 100).build());
+        testing_env!(ctx.block_timestamp(round(2) + 100).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             a1.farmed_units.0,
@@ -886,7 +887,7 @@ mod tests {
 
         // ------------------------------------------------
         // last round
-        testing_env!(ctx.block_timestamp(19 * ROUND_NS + 100).build());
+        testing_env!(ctx.block_timestamp(round(9)).build());
         let total_rounds: u128 =
             round_number(ctr.farming_start, ctr.farming_end, ctr.farming_end).into();
         a1 = ctr.status(u1_a.clone()).unwrap();
@@ -898,7 +899,7 @@ mod tests {
 
         // ------------------------------------------------
         // end of farming
-        testing_env!(ctx.block_timestamp(20 * ROUND_NS + 100).build());
+        testing_env!(ctx.block_timestamp(round(END) + 100).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             a1.farmed_units.0,
@@ -906,7 +907,7 @@ mod tests {
             "after end we should get all rewards"
         );
 
-        testing_env!(ctx.block_timestamp(21 * ROUND_NS + 100).build());
+        testing_env!(ctx.block_timestamp(round(END + 1) + 100).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             a1.farmed_units.0,
@@ -916,7 +917,56 @@ mod tests {
     }
 
     #[test]
-    fn test_staking() {
+    fn test_alone_staking_late() {
+        let u1 = acc_u1();
+        let u1_a: AccountId = u1.clone().into();
+        let t_s1 = acc_staking1(); // token 1
+        let t_s2 = acc_staking2();
+
+        let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
+        finalize(&mut ctr);
+        // register user1 account
+        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
+        ctr.storage_deposit(None, None);
+
+        // ------------------------------------------------
+        // stake only one token at round 2
+        testing_env!(ctx.block_timestamp(round(1)).build());
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, E24 / 10);
+
+        // ------------------------------------------------
+        // stake second token in the middle of round 4
+        // but firstly verify that we didn't farm anything
+        testing_env!(ctx.block_timestamp(round(3) + 100).build());
+        let mut a1 = ctr.status(u1_a.clone()).unwrap();
+        let mut a1_stake = vec![E24 / 10, 0];
+        assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
+        assert_eq!(a1.farmed_units.0, 0, "need to stake all tokens to farm");
+
+        testing_env!(ctx.block_timestamp(round(4) + 500).build());
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, E24 / 10);
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        a1_stake = vec![E24 / 10, E24 / 10];
+        assert_eq!(to_u128s(&a1.stake_tokens), a1_stake, "a1 stake");
+        assert_eq!(a1.farmed_units.0, 0, "full round needs to pass to farm");
+
+        // ------------------------------------------------
+        // at round 6th, after full round of staking we farm the first tokens!
+        testing_env!(ctx.block_timestamp(round(5)).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(a1.farmed_units.0, RATE, "full round needs to pass to farm");
+
+        testing_env!(ctx.block_timestamp(round(END)).build());
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(
+            a1.farmed_units.0,
+            6 * RATE,
+            "farming form round 5 (including) to 10"
+        );
+    }
+
+    #[test]
+    fn test_staking_2_users() {
         let u1 = acc_u1();
         let u1_a: AccountId = u1.clone().into();
         let u2 = acc_u2();
@@ -937,8 +987,8 @@ mod tests {
 
         // ------------------------------------------------
         // stake before farming_start
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, 4 * E24, 1);
-        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24, 1);
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, 4 * E24);
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24);
         let a1_stake = vec![4 * E24, 2 * E24];
 
         // ------------------------------------------------
@@ -947,9 +997,11 @@ mod tests {
         testing_env!(ctx
             .attached_deposit(STORAGE_COST)
             .predecessor_account_id(u2.clone())
+            .block_timestamp(round(3))
             .build());
         ctr.storage_deposit(None, None);
-        stake(&mut ctx, &mut ctr, &u2, &t_s2, 4 * E24, 13);
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, 2 * E24);
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, 2 * E24);
 
         let mut a1 = ctr.status(u1_a.clone()).unwrap();
         testing_env!(ctx.block_timestamp(13 * ROUND_NS + 100).build());
@@ -964,7 +1016,7 @@ mod tests {
             "adding new stake doesn't change current issuance"
         );
         let mut a2 = ctr.status(u2_a.clone()).unwrap();
-        let a2_stake = vec![0, 4 * E24];
+        let a2_stake = vec![2 * E24, 2 * E24];
         assert_eq!(
             to_u128s(&a2.stake_tokens),
             a2_stake,
@@ -972,14 +1024,9 @@ mod tests {
         );
         assert_eq!(a2.farmed_units.0, 0, "u2 doesn't farm now");
 
-        // setup
-        /*
-
-
         // ------------------------------------------------
         // 1 epochs later (5th round) user2 should have farming reward
         testing_env!(ctx.block_timestamp(14 * ROUND_NS).build());
-
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             to_u128s(&a1.stake_tokens),
@@ -1004,6 +1051,8 @@ mod tests {
             "account2 first farming is correct"
         );
 
+        // setup
+        /*
 
         // ------------------------------------------------
         // go to the last round of farming, and try to stake - it shouldn't change the rewards.
@@ -1220,14 +1269,10 @@ mod tests {
 
     */
 
-    fn get_acc(idx: usize) -> AccountId {
-        accounts(idx).as_ref().to_string()
-    }
-
-    fn assert_close(a: u128, b: u128, msg: &'static str) {
-        assert!(a * 99999 / 100_000 < b, "{}, {} <> {}", msg, a, b);
-        assert!(a * 100001 / 100_000 > b, "{}, {} <> {}", msg, a, b);
-    }
+    // fn assert_close(a: u128, b: u128, msg: &'static str) {
+    //     assert!(a * 99999 / 100_000 < b, "{}, {} <> {}", msg, a, b);
+    //     assert!(a * 100001 / 100_000 > b, "{}, {} <> {}", msg, a, b);
+    // }
 
     fn to_u128s(v: &Vec<U128>) -> Vec<Balance> {
         v.iter().map(|x| x.0).collect()

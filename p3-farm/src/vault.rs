@@ -51,7 +51,6 @@ impl Vault {
         if self.reward_acc >= reward_acc {
             return; // self.farmed;
         }
-
         self.farmed += self.min_stake * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
         self.reward_acc = reward_acc;
     }
@@ -115,8 +114,8 @@ impl Contract {
         let s = min_stake(&v.staked, &self.stake_rates);
         if s > v.min_stake {
             let diff = s - v.min_stake;
-            v.min_stake = s;
             self.staked_units += diff; // must be called after ping_s
+            v.min_stake = s;
         }
         self.vaults.insert(user, &v);
         log!("Staked {} {}, stake_units: {}", amount, token, s);
