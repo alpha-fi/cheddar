@@ -185,6 +185,7 @@ impl Contract {
                     .collect();
                 return Some(Status {
                     stake_tokens: to_U128s(&v.staked),
+                    stake: v.min_stake.into(),
                     farmed_units: v.farmed.into(),
                     farmed_tokens: farmed,
                     timestamp: self.farming_start + r0 * ROUND,
@@ -987,12 +988,12 @@ mod tests {
 
         // ------------------------------------------------
         // stake before farming_start
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, 4 * E24);
-        stake(&mut ctx, &mut ctr, &u1, &t_s2, 2 * E24);
-        let a1_stake = vec![4 * E24, 2 * E24];
+        let a1_stake = vec![4 * E24, 3 * E24];
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, a1_stake[0]);
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, a1_stake[1]);
 
         // ------------------------------------------------
-        // 1 epoch later (4th round) user2 stake
+        // at round 4, user2 stakes
         // firstly register u2 account (storage_deposit) and then stake.
         testing_env!(ctx
             .attached_deposit(STORAGE_COST)
@@ -1000,11 +1001,11 @@ mod tests {
             .block_timestamp(round(3))
             .build());
         ctr.storage_deposit(None, None);
-        stake(&mut ctx, &mut ctr, &u2, &t_s2, 2 * E24);
-        stake(&mut ctx, &mut ctr, &u2, &t_s2, 2 * E24);
+        let a2_stake = vec![E24, E24];
+        stake(&mut ctx, &mut ctr, &u2, &t_s1, a2_stake[0]);
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, a2_stake[1]);
 
         let mut a1 = ctr.status(u1_a.clone()).unwrap();
-        testing_env!(ctx.block_timestamp(13 * ROUND_NS + 100).build());
         assert_eq!(
             to_u128s(&a1.stake_tokens),
             a1_stake,
@@ -1015,18 +1016,20 @@ mod tests {
             3 * RATE,
             "adding new stake doesn't change current issuance"
         );
+        assert_eq!(a1.stake.0, 3 * E24 / 10);
+
         let mut a2 = ctr.status(u2_a.clone()).unwrap();
-        let a2_stake = vec![2 * E24, 2 * E24];
         assert_eq!(
             to_u128s(&a2.stake_tokens),
             a2_stake,
             "account2 stake got updated"
         );
         assert_eq!(a2.farmed_units.0, 0, "u2 doesn't farm now");
+        assert_eq!(a2.stake.0, E24 / 10);
 
         // ------------------------------------------------
         // 1 epochs later (5th round) user2 should have farming reward
-        testing_env!(ctx.block_timestamp(14 * ROUND_NS).build());
+        testing_env!(ctx.block_timestamp(round(4)).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
             to_u128s(&a1.stake_tokens),
@@ -1035,7 +1038,7 @@ mod tests {
         );
         assert_eq!(
             a1.farmed_units.0,
-            4 * RATE + RATE * 2 / 3,
+            3 * RATE + RATE * 3 / 4,
             "5th round of account1 farming"
         );
 
@@ -1045,53 +1048,58 @@ mod tests {
             a2_stake,
             "account1 stake didn't change"
         );
+        assert_eq!(a1.stake.0, 3 * E24 / 10);
         assert_eq!(
             a2.farmed_units.0,
-            RATE / 3,
+            RATE / 4,
             "account2 first farming is correct"
         );
 
-        // setup
-        /*
-
         // ------------------------------------------------
         // go to the last round of farming, and try to stake - it shouldn't change the rewards.
-        stake(&mut ctx, &mut ctr, &user2, 4 * E24, 20);
+        testing_env!(ctx.block_timestamp(round(END)).build());
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, 40 * E24);
 
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(a1.farmed_units.0, 3 * RATE + RATE * 7 * 3 / 4);
         assert_eq!(
-            a1_r.0,
-            4 * RATE + 6 * RATE * 2 / 3,
+            a1.farmed_units.0,
+            3 * RATE + 7 * RATE * 3 / 4,
             "last round of account1 farming"
         );
 
-        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
-        assert_eq!(a2_s.0, 8 * E24, "account2 stake is updated");
-        assert_eq!(a2_r.0, 6 * RATE / 3, "account2 first farming is correct");
-
+        a2 = ctr.status(u2_a.clone()).unwrap();
+        let a2_stake = vec![E24, 41 * E24];
         assert_eq!(
-            ctr.total_stake,
-            a1_s.0 + a2_s.0,
-            "total stake should equal to sum of  user stake"
+            to_u128s(&a2.stake_tokens),
+            a2_stake,
+            "account2 stake is updated"
+        );
+        assert_eq!(
+            a2.farmed_units.0,
+            7 * RATE / 4,
+            "account2 first farming is correct"
         );
 
         // ------------------------------------------------
         // After farm end farming is disabled
-        testing_env!(ctx.block_timestamp(21 * ROUND_NS + 100).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 8 * E24, "account1 stake didn't change");
+        testing_env!(ctx.block_timestamp(round(END + 2)).build());
+
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(a1.stake.0, 3 * E24 / 10, "account1 stake didn't change");
         assert_eq!(
-            a1_r.0,
-            4 * RATE + 6 * RATE * 2 / 3,
+            a1.farmed_units.0,
+            3 * RATE + 7 * RATE * 3 / 4,
             "last round of account1 farming"
         );
 
-        let (a2_s, a2_r, _) = ctr.status(user2_a.clone());
-        assert_eq!(a2_s.0, 8 * E24, "account2 stake is updated");
-        assert_eq!(a2_r.0, 6 * RATE / 3, "account2 first farming is correct");
-
-        */
+        a2 = ctr.status(u2_a.clone()).unwrap();
+        assert_eq!(a2.stake.0, E24, "account2 min stake have been updated ");
+        assert_eq!(
+            a1.farmed_units.0,
+            3 * RATE + 7 * RATE * 3 / 4,
+            "but there is no more farming"
+        );
     }
 
     /*

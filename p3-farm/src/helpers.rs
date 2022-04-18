@@ -26,7 +26,7 @@ pub fn find_acc_idx(acc: &AccountId, acc_v: &Vec<AccountId>) -> usize {
 }
 
 pub fn min_stake(staked: &Vec<u128>, stake_rates: &Vec<u128>) -> Balance {
-    let mut min: u128 = 1 << 128 - 1;
+    let mut min: u128 = 1 << 128 - 1; // max u128
     for (i, rate) in stake_rates.iter().enumerate() {
         let s = farmed_tokens(staked[i], *rate);
         if s < min {
