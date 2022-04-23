@@ -2,10 +2,10 @@ test:
 # to test specific test run: cargo test <test name>
 	@cargo test
 
-test-debug:
+test-unit-debug:
 # "--" allows to pass extra arguments
 # "--nocapture" disables stdout capturing (testes print all println)
-	@RUST_BACKTRACE=1 cargo test  -- --nocapture
+	@RUST_BACKTRACE=1 cargo test --lib  -- --nocapture
 
 test-unit:
 	@cargo test --lib
