@@ -161,6 +161,7 @@ impl Contract {
             farm_unit_emission: self.farm_unit_emission.into(),
             farm_tokens: self.farm_tokens.clone(),
             farm_token_rates: to_U128s(&self.farm_token_rates),
+            farm_deposits: to_U128s(&self.farm_deposits),
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
@@ -218,7 +219,7 @@ impl Contract {
             "Expected deposit for token {} is {}, got {}",
             self.farm_tokens[token_i], expected, amount
         );
-        self.farm_deposits[token_i] += amount;
+        self.farm_deposits[token_i] = amount;
     }
 
     /// Deposit native near during the setup phase for farming rewards.
@@ -347,10 +348,28 @@ impl Contract {
     }
 
     /// start and end are unix timestamps (in seconds)
-    pub fn set_end(&mut self, end: u64) {
+    pub fn set_start_end(&mut self, start: u64, end: u64) {
         self.assert_owner();
-        assert!(end > self.farming_start, "End must be after start");
+        assert!(
+            start > env::block_timestamp() / SECOND,
+            "start must be in the future"
+        );
+        assert!(start < end, "start must be before end");
+        self.farming_start = start;
         self.farming_end = end;
+    }
+
+    /// start and end are unix timestamps (in seconds)
+    pub fn admin_withdraw(&mut self, token: AccountId, amount: U128) {
+        self.assert_owner();
+        ext_ft::ft_transfer(
+            env::predecessor_account_id(),
+            amount,
+            Some("admin-withdrawing-back".to_string()),
+            &token,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        );
     }
 
     pub fn finalize_setup(&mut self) {
@@ -910,11 +929,22 @@ mod tests {
 
         testing_env!(ctx.block_timestamp(round(END + 1) + 100).build());
         a1 = ctr.status(u1_a.clone()).unwrap();
+        let total_farmed = total_rounds * RATE;
         assert_eq!(
-            a1.farmed_units.0,
-            total_rounds * RATE,
+            a1.farmed_units.0, total_farmed,
             "after end there is no more farming"
         );
+
+        // ------------------------------------------------
+        // withdraw
+        testing_env!(ctx.predecessor_account_id(u1.clone()).build());
+        ctr.withdraw_crop();
+        a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(
+            a1.farmed_units.0, 0,
+            "after withdrawing we should have 0 farming units"
+        );
+        assert_eq!(ctr.total_harvested, vec![20 * E24, 10 * E24]);
     }
 
     #[test]
@@ -1103,46 +1133,6 @@ mod tests {
     }
 
     /*
-    #[test]
-    fn test_staking_late() {
-        let user = acc_user1();
-        let user_a: AccountId = user.clone().into();
-        let (mut ctx, mut ctr) = setup_contract(user.clone(), 0, 1, 0);
-        assert_eq!(
-            ctr.total_stake, 0,
-            "at the beginning there should be 0 total stake"
-        );
-
-        // register an account
-        testing_env!(ctx
-            .attached_deposit(STORAGE_COST)
-            .block_timestamp(15 * ROUND)
-            .build());
-        ctr.storage_deposit(None, None);
-
-        stake(&mut ctx, &mut ctr, &user, E24, 15);
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, E24, "user stake");
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to account1 stake"
-        );
-        assert_eq!(
-            a1_r.0, 0,
-            "no cheddar should be rewarded in a round when user joins the pool"
-        );
-
-        // in a subsequent round we should farm!
-        testing_env!(ctx.block_timestamp(16 * ROUND_NS + 100).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, E24, "account1 stake didn't change");
-        assert_eq!(a1_r.0, RATE, "account1 farming");
-
-        assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to the user  user stake"
-        );
-    }
 
     #[test]
     fn test_staking_late_join() {

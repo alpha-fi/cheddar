@@ -50,6 +50,7 @@ pub struct ContractParams {
     pub farm_unit_emission: U128,
     pub farm_tokens: Vec<AccountId>,
     pub farm_token_rates: Vec<U128>,
+    pub farm_deposits: Vec<U128>,
     pub farming_start: u64,
     pub farming_end: u64,
     pub total_staked: Vec<U128>,
