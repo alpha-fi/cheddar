@@ -23,6 +23,9 @@ pub struct Vault {
     /// farmed units are translated to all `Contract.farm_tokens` based on
     /// `Contract.farm_token_rates`
     pub farmed: Balance,
+    /// Cheddy NFT deposited to get an extra boost. Only one Cheddy can be deposited to a
+    /// single acocunt.
+    pub cheddy: String,
 }
 
 impl Vault {
@@ -32,6 +35,7 @@ impl Vault {
             staked: vec![0; staked_len],
             min_stake: 0,
             farmed: 0,
+            cheddy: "".into(),
         }
     }
 
@@ -153,6 +157,52 @@ impl Contract {
         self.vaults.insert(user, &v);
         self.transfer_staked_tokens(user.clone(), token_i, amount);
         return remaining;
+    }
+
+    /// Implements nft receiver handler
+    #[allow(unused_variables)]
+    pub fn nft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        previous_owner_id: AccountId,
+        token_id: String,
+        msg: String,
+    ) -> PromiseOrValue<bool> {
+        if env::predecessor_account_id() != self.cheddar_nft {
+            log!("Only Cheddy NFTs ({}) are supported", self.cheddar_nft);
+            return PromiseOrValue::Value(true);
+        }
+        let v = self.vaults.get(&previous_owner_id);
+        if v.is_none() {
+            log!("Account not registered. Register prior to depositing NFT");
+            return PromiseOrValue::Value(true);
+        }
+        let mut v = v.unwrap();
+        if v.cheddy != "" {
+            log!("Account already has Cheddy deposited. You can only deposit one cheddy");
+            return PromiseOrValue::Value(true);
+        }
+        v.cheddy = token_id;
+        self.vaults.insert(&previous_owner_id, &v);
+        return PromiseOrValue::Value(false);
+    }
+
+    /// withdraw NFT to a destination account using the `nft_transfer` method.
+    pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
+        let user = env::predecessor_account_id();
+        let mut v = self.get_vault(&user);
+        assert!(v.cheddy != "", "Sender has not any NFT deposit");
+        ext_nft::nft_transfer(
+            receiver_id.into(),
+            v.cheddy.clone(),
+            None,
+            Some("Cheddy withdraw".to_string()),
+            &self.cheddar_nft,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        );
+        v.cheddy = "".into();
+        self.vaults.insert(&user, &v);
     }
 }
 

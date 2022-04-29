@@ -56,6 +56,8 @@ pub struct Contract {
     pub farming_start: u64,
     /// unix timestamp (seconds) when the farming ends (first time with no farming).
     pub farming_end: u64,
+    /// NFT token used for boost
+    pub cheddar_nft: AccountId,
     /// total number of harvested farm tokens
     pub total_harvested: Vec<Balance>,
     /// rewards accumulator: running sum of farm_units per token (equals to the total
@@ -94,6 +96,7 @@ impl Contract {
         farm_token_rates: Vec<U128>,
         farming_start: u64,
         farming_end: u64,
+        cheddar_nft: ValidAccountId,
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
@@ -120,6 +123,7 @@ impl Contract {
             farm_deposits: vec![0; farm_len],
             farming_start,
             farming_end,
+            cheddar_nft: cheddar_nft.into(),
             total_harvested: vec![0; farm_len],
             reward_acc: 0,
             reward_acc_round: 0,
@@ -657,6 +661,7 @@ mod tests {
         fee_rate: u32,
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
+        let cheddar_nft: ValidAccountId = "cheddy.cheddar.near".try_into().unwrap();
         testing_env!(context.build());
         let contract = Contract::new(
             acc_owner(),
@@ -665,8 +670,9 @@ mod tests {
             RATE.into(),                         // farm_unit_emission
             vec![acc_cheddar(), acc_farming2()], // farming tokens
             to_U128s(&vec![E24, E24 / 2]),       // farming rates
-            round(0) / SECOND,
-            round(END) / SECOND,
+            round(0) / SECOND,                   // farming start
+            round(END) / SECOND,                 // farmnig end
+            cheddar_nft,                         // cheddy nft
             fee_rate,
             accounts(1), // treasury
         );

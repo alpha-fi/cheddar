@@ -41,6 +41,17 @@ pub trait FungibleToken {
     fn ft_mint(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
+#[ext_contract(ext_nft)]
+pub trait NonFungibleToken {
+    fn nft_transfer(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: String,
+        approval_id: Option<u64>,
+        memo: Option<String>,
+    );
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct ContractParams {
     pub is_active: bool,
