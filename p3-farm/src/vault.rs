@@ -99,6 +99,22 @@ impl Contract {
                 / self.staked_units
     }
 
+    pub(crate) fn _recompute_stake(&mut self, v: &mut Vault) {
+        let mut s = min_stake(&v.staked, &self.stake_rates);
+        if !v.cheddy.is_empty() {
+            s += s * u128::from(self.cheddar_nft_boost) / BASIS_P;
+        }
+        if s > v.min_stake {
+            let diff = s - v.min_stake;
+            self.staked_units += diff; // must be called after ping_s
+            v.min_stake = s;
+        } else if s < v.min_stake {
+            let diff = s - v.min_stake;
+            self.staked_units += diff; // must be called after ping_s
+            v.min_stake = s;
+        }
+    }
+
     /// Returns new stake units
     pub(crate) fn _stake(
         &mut self,
@@ -115,17 +131,13 @@ impl Contract {
 
         v.staked[token_i] += amount;
         self.total_stake[token_i] += amount;
-        let s = min_stake(&v.staked, &self.stake_rates);
-        if s > v.min_stake {
-            let diff = s - v.min_stake;
-            self.staked_units += diff; // must be called after ping_s
-            v.min_stake = s;
-        }
+        self._recompute_stake(&mut v);
         self.vaults.insert(user, &v);
-        log!("Staked {} {}, stake_units: {}", amount, token, s);
-        return s;
+        log!("Staked {} {}, stake_units: {}", amount, token, v.min_stake);
+        return v.min_stake;
     }
 
+    /// Returns remaining amount of `token` user has staked after the unstake.
     pub(crate) fn _unstake(
         &mut self,
         user: &AccountId,
@@ -146,14 +158,7 @@ impl Contract {
         let remaining = v.staked[token_i] - amount;
         v.staked[token_i] = remaining;
         self.total_stake[token_i] -= amount;
-
-        let s = min_stake(&v.staked, &self.stake_rates);
-        if s < v.min_stake {
-            let diff = v.min_stake - s;
-            v.min_stake = s;
-            self.staked_units -= diff; // must be called after ping_s
-        }
-
+        self._recompute_stake(&mut v);
         self.vaults.insert(user, &v);
         self.transfer_staked_tokens(user.clone(), token_i, amount);
         return remaining;
@@ -178,11 +183,14 @@ impl Contract {
             return PromiseOrValue::Value(true);
         }
         let mut v = v.unwrap();
-        if v.cheddy != "" {
+        if !v.cheddy.is_empty() {
             log!("Account already has Cheddy deposited. You can only deposit one cheddy");
             return PromiseOrValue::Value(true);
         }
+        self.ping_all(&mut v);
+
         v.cheddy = token_id;
+        self._recompute_stake(&mut v);
         self.vaults.insert(&previous_owner_id, &v);
         return PromiseOrValue::Value(false);
     }
@@ -191,7 +199,8 @@ impl Contract {
     pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
         let user = env::predecessor_account_id();
         let mut v = self.get_vault(&user);
-        assert!(v.cheddy != "", "Sender has not any NFT deposit");
+        assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
+        self.ping_all(&mut v);
         ext_nft::nft_transfer(
             receiver_id.into(),
             v.cheddy.clone(),
@@ -201,7 +210,9 @@ impl Contract {
             1,
             GAS_FOR_FT_TRANSFER,
         );
+
         v.cheddy = "".into();
+        self._recompute_stake(&mut v);
         self.vaults.insert(&user, &v);
     }
 }

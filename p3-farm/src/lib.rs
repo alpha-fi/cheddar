@@ -58,6 +58,8 @@ pub struct Contract {
     pub farming_end: u64,
     /// NFT token used for boost
     pub cheddar_nft: AccountId,
+    /// boost when staking cheddy in basis points
+    pub cheddar_nft_boost: u32,
     /// total number of harvested farm tokens
     pub total_harvested: Vec<Balance>,
     /// rewards accumulator: running sum of farm_units per token (equals to the total
@@ -97,6 +99,7 @@ impl Contract {
         farming_start: u64,
         farming_end: u64,
         cheddar_nft: ValidAccountId,
+        cheddar_nft_boost: u32,
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
@@ -124,6 +127,7 @@ impl Contract {
             farming_start,
             farming_end,
             cheddar_nft: cheddar_nft.into(),
+            cheddar_nft_boost,
             total_harvested: vec![0; farm_len],
             reward_acc: 0,
             reward_acc_round: 0,
@@ -673,6 +677,7 @@ mod tests {
             round(0) / SECOND,                   // farming start
             round(END) / SECOND,                 // farmnig end
             cheddar_nft,                         // cheddy nft
+            100,                                 // cheddy boost
             fee_rate,
             accounts(1), // treasury
         );
