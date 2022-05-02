@@ -705,6 +705,21 @@ mod tests {
         ctr.ft_on_transfer(user.clone(), amount.into(), "transfer to farm".to_string());
     }
 
+    /// epoch is a timer in rounds (rather than miliseconds)
+    fn unstake(
+        ctx: &mut VMContextBuilder,
+        ctr: &mut Contract,
+        user: &ValidAccountId,
+        token: &ValidAccountId,
+        amount: u128,
+    ) {
+        testing_env!(ctx
+            .attached_deposit(1)
+            .predecessor_account_id(user.clone())
+            .build());
+        ctr.unstake(token.clone(), amount.into());
+    }
+
     #[test]
     fn test_set_active() {
         let (_, mut ctr) = setup_contract(acc_owner(), 5, 0);
@@ -1143,43 +1158,72 @@ mod tests {
         );
     }
 
-    /*
-
     #[test]
-    fn test_staking_late_join() {
-        let user = acc_user1();
-        let user_a: AccountId = user.clone().into();
-        let (mut ctx, mut ctr) =
-            setup_contract(user.clone(), STORAGE_COST.try_into().unwrap(), 14, 0);
+    fn test_stake_unstake() {
+        let u1 = acc_u1();
+        let u1_a: AccountId = u1.clone().into();
+        let u2 = acc_u2();
+        let u2_a: AccountId = u2.clone().into();
+        let t_s1 = acc_staking1(); // token 1
+        let t_s2 = acc_staking2();
 
-        // register an account
-        ctr.storage_deposit(None, None);
-        assert_eq!(
-            ctr.total_stake, 0,
-            "at the beginning there should be 0 total stake"
-        );
+        let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
+        finalize(&mut ctr);
+        // register user1 account
 
         // ------------------------------------------------
-        // user joins after the farm started
-        stake(&mut ctx, &mut ctr, &user, 2 * E24, 15);
+        // register and stake by user1
+        let a1_stake = vec![E24, 2 * E24];
+        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
+        ctr.storage_deposit(None, None);
+        stake(&mut ctx, &mut ctr, &u1, &t_s1, a1_stake[0]);
+        stake(&mut ctx, &mut ctr, &u1, &t_s2, a1_stake[1]);
 
-        testing_env!(ctx.block_timestamp(15 * ROUND_NS + ROUND_NS_H).build());
-        let (a1_s, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_s.0, 2 * E24, "user stake is correct");
+        // ------------------------------------------------
+        // register and stake by user2
+        testing_env!(ctx
+            .predecessor_account_id(u2.clone())
+            .attached_deposit(STORAGE_COST)
+            .build());
+        ctr.storage_deposit(None, None);
+        stake(&mut ctx, &mut ctr, &u2, &t_s1, a1_stake[0]);
+        stake(&mut ctx, &mut ctr, &u2, &t_s2, a1_stake[1]);
+
+        // user1 unstake at round 5
+        testing_env!(ctx.block_timestamp(round(4)).build());
+        unstake(&mut ctx, &mut ctr, &u1, &t_s1, a1_stake[0]);
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        let a2 = ctr.status(u2_a.clone()).unwrap();
+
         assert_eq!(
-            a1_r.0, 0,
-            "no cheddar should be rewarded during the first round of staking"
+            a1.farmed_units.0,
+            4 / 2 * RATE,
+            "user1 and user2 should farm equally in first 4 rounds"
         );
         assert_eq!(
-            ctr.total_stake, a1_s.0,
-            "total stake should equal to the user stake"
+            a2.farmed_units.0,
+            4 / 2 * RATE,
+            "user1 and user2 should farm equally in first 4 rounds"
         );
 
-        testing_env!(ctx.block_timestamp(16 * ROUND_NS).build());
-        let (_, a1_r, _) = ctr.status(user_a.clone());
-        assert_eq!(a1_r.0, RATE, "One round farming should be allocated");
+        // check at round 7 - user1 should not farm any more
+        testing_env!(ctx.block_timestamp(round(6)).build());
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        let a2 = ctr.status(u2_a.clone()).unwrap();
+
+        assert_eq!(
+            a1.farmed_units.0,
+            4 / 2 * RATE,
+            "user1 doesn't farm any more"
+        );
+        assert_eq!(
+            a2.farmed_units.0,
+            (4 / 2 + 2) * RATE,
+            "user2 gets 100% of farming"
+        );
     }
 
+    /*
     #[test]
     fn test_staking_few_users() {
         let user = acc_user1();
