@@ -187,6 +187,7 @@ impl Contract {
             log!("Account already has Cheddy deposited. You can only deposit one cheddy");
             return PromiseOrValue::Value(true);
         }
+        log!("Staking Cheddy NFT - you will obtain a special farming boost");
         self.ping_all(&mut v);
 
         v.cheddy = token_id;

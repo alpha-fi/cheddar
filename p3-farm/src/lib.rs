@@ -630,6 +630,10 @@ mod tests {
         "atom2".try_into().unwrap()
     }
 
+    fn acc_nft_cheddy() -> ValidAccountId {
+        "nft_cheddy".try_into().unwrap()
+    }
+
     fn acc_u1() -> ValidAccountId {
         "user1".try_into().unwrap()
     }
@@ -652,6 +656,7 @@ mod tests {
     /// first and last round
     const END: i64 = 10;
     const RATE: u128 = E24 * 2; // 2 farming_units / round (60s)
+    const BOOST: u32 = 250;
 
     fn round(r: i64) -> u64 {
         let r: u64 = (10 + r).try_into().unwrap();
@@ -665,7 +670,6 @@ mod tests {
         fee_rate: u32,
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
-        let cheddar_nft: ValidAccountId = "cheddy.cheddar.near".try_into().unwrap();
         testing_env!(context.build());
         let contract = Contract::new(
             acc_owner(),
@@ -676,8 +680,8 @@ mod tests {
             to_U128s(&vec![E24, E24 / 2]),       // farming rates
             round(0) / SECOND,                   // farming start
             round(END) / SECOND,                 // farmnig end
-            cheddar_nft,                         // cheddy nft
-            100,                                 // cheddy boost
+            acc_nft_cheddy(),                    // cheddy nft
+            BOOST,                               // cheddy boost
             fee_rate,
             accounts(1), // treasury
         );
@@ -718,6 +722,31 @@ mod tests {
             .predecessor_account_id(user.clone())
             .build());
         ctr.unstake(token.clone(), amount.into());
+    }
+
+    /// epoch is a timer in rounds (rather than miliseconds)
+    fn register_user_and_stake(
+        ctx: &mut VMContextBuilder,
+        ctr: &mut Contract,
+        user: &ValidAccountId,
+        stake_amounts: &Vec<u128>,
+        r: i64,
+    ) {
+        testing_env!(ctx
+            .attached_deposit(STORAGE_COST)
+            .predecessor_account_id(user.clone())
+            .block_timestamp(round(r))
+            .build());
+        ctr.storage_deposit(None, None);
+        for i in 0..ctr.stake_tokens.len() {
+            stake(
+                ctx,
+                ctr,
+                user,
+                &ctr.stake_tokens[i].to_string().try_into().unwrap(),
+                stake_amounts[i].into(),
+            );
+        }
     }
 
     #[test]
@@ -1028,7 +1057,7 @@ mod tests {
         let u1_a: AccountId = u1.clone().into();
         let u2 = acc_u2();
         let u2_a: AccountId = u2.clone().into();
-        let t_s1 = acc_staking1(); // token 1
+        // let t_s1 = acc_staking1(); // token 1
         let t_s2 = acc_staking2();
         let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
         assert_eq!(
@@ -1038,28 +1067,15 @@ mod tests {
         );
         finalize(&mut ctr);
 
-        // register user1 account
-        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
-        ctr.storage_deposit(None, None);
-
-        // ------------------------------------------------
-        // stake before farming_start
+        // register user1 account and stake  before farming_start
         let a1_stake = vec![4 * E24, 3 * E24];
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, a1_stake[0]);
-        stake(&mut ctx, &mut ctr, &u1, &t_s2, a1_stake[1]);
+        register_user_and_stake(&mut ctx, &mut ctr, &u1, &a1_stake, -2);
 
         // ------------------------------------------------
-        // at round 4, user2 stakes
+        // at round 4, user2 registers and stakes
         // firstly register u2 account (storage_deposit) and then stake.
-        testing_env!(ctx
-            .attached_deposit(STORAGE_COST)
-            .predecessor_account_id(u2.clone())
-            .block_timestamp(round(3))
-            .build());
-        ctr.storage_deposit(None, None);
         let a2_stake = vec![E24, E24];
-        stake(&mut ctx, &mut ctr, &u2, &t_s1, a2_stake[0]);
-        stake(&mut ctx, &mut ctr, &u2, &t_s2, a2_stake[1]);
+        register_user_and_stake(&mut ctx, &mut ctr, &u2, &a2_stake, 3);
 
         let mut a1 = ctr.status(u1_a.clone()).unwrap();
         assert_eq!(
@@ -1165,29 +1181,15 @@ mod tests {
         let u2 = acc_u2();
         let u2_a: AccountId = u2.clone().into();
         let t_s1 = acc_staking1(); // token 1
-        let t_s2 = acc_staking2();
 
         let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
         finalize(&mut ctr);
-        // register user1 account
 
         // ------------------------------------------------
-        // register and stake by user1
+        // register and stake by user1 and user2 - both will stake the same amounts
         let a1_stake = vec![E24, 2 * E24];
-        testing_env!(ctx.attached_deposit(STORAGE_COST).build());
-        ctr.storage_deposit(None, None);
-        stake(&mut ctx, &mut ctr, &u1, &t_s1, a1_stake[0]);
-        stake(&mut ctx, &mut ctr, &u1, &t_s2, a1_stake[1]);
-
-        // ------------------------------------------------
-        // register and stake by user2
-        testing_env!(ctx
-            .predecessor_account_id(u2.clone())
-            .attached_deposit(STORAGE_COST)
-            .build());
-        ctr.storage_deposit(None, None);
-        stake(&mut ctx, &mut ctr, &u2, &t_s1, a1_stake[0]);
-        stake(&mut ctx, &mut ctr, &u2, &t_s2, a1_stake[1]);
+        register_user_and_stake(&mut ctx, &mut ctr, &u1, &a1_stake, -2);
+        register_user_and_stake(&mut ctx, &mut ctr, &u2, &a1_stake, -2);
 
         // user1 unstake at round 5
         testing_env!(ctx.block_timestamp(round(4)).build());
@@ -1220,6 +1222,62 @@ mod tests {
             a2.farmed_units.0,
             (4 / 2 + 2) * RATE,
             "user2 gets 100% of farming"
+        );
+    }
+
+    #[test]
+    fn test_nft_boost() {
+        let u1 = acc_u1();
+        let u1_a: AccountId = u1.clone().into();
+        let u2 = acc_u2();
+        let u2_a: AccountId = u2.clone().into();
+        let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
+        finalize(&mut ctr);
+
+        // ------------------------------------------------
+        // register and stake by user1 and user2 - both will stake the same amounts,
+        // but user1 will have nft boost
+        let a1_stake = vec![E24, 2 * E24];
+        register_user_and_stake(&mut ctx, &mut ctr, &u1, &a1_stake, -2);
+        testing_env!(ctx.predecessor_account_id(acc_nft_cheddy()).build());
+        ctr.nft_on_transfer(u1_a.clone(), u1_a.clone(), "1".into(), "".into());
+        register_user_and_stake(&mut ctx, &mut ctr, &u2, &a1_stake, -2);
+
+        // check at round 3
+        testing_env!(ctx.block_timestamp(round(2)).build());
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        let a2 = ctr.status(u2_a.clone()).unwrap();
+
+        assert!(
+            a1.farmed_units.0 > 2 / 2 * RATE,
+            "user1 should farm more than the 'normal' rate"
+        );
+        assert!(
+            a2.farmed_units.0 < 2 / 2 * RATE,
+            "user2 should farm less than the 'normal' rate"
+        );
+
+        // withdraw nft during round 3
+        testing_env!(ctx
+            .predecessor_account_id(u1.clone())
+            .block_timestamp(round(2) + 1000)
+            .build());
+        ctr.withdraw_nft(u1.clone());
+
+        // check at round 4 - user1 should farm at equal rate as user2
+        testing_env!(ctx.block_timestamp(round(3)).build());
+        let a1_4 = ctr.status(u1_a.clone()).unwrap();
+        let a2_4 = ctr.status(u2_a.clone()).unwrap();
+
+        assert_eq!(
+            a1_4.farmed_units.0 - a1.farmed_units.0,
+            RATE / 2,
+            "user1 farming rate is equal to user2"
+        );
+        assert_eq!(
+            a2_4.farmed_units.0 - a2.farmed_units.0,
+            RATE / 2,
+            "user1 farming rate is equal to user2",
         );
     }
 
