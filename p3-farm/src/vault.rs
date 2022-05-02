@@ -109,8 +109,8 @@ impl Contract {
             self.staked_units += diff; // must be called after ping_s
             v.min_stake = s;
         } else if s < v.min_stake {
-            let diff = s - v.min_stake;
-            self.staked_units += diff; // must be called after ping_s
+            let diff = v.min_stake - s;
+            self.staked_units -= diff; // must be called after ping_s
             v.min_stake = s;
         }
     }
