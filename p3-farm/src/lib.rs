@@ -388,7 +388,7 @@ impl Contract {
         );
         let now = env::block_timestamp() / SECOND;
         assert!(
-            now < self.farming_start - ROUND, // TODO: change to 1 day?
+            now < self.farming_start - 10 * ROUND, // TODO: change to 1 day?
             "must be finalized at last before farm start"
         );
         for i in 0..self.farm_deposits.len() {
@@ -399,6 +399,21 @@ impl Contract {
             )
         }
         self.setup_finalized = true;
+    }
+
+    /// Returns expected and received deposits for farmed tokens
+    pub fn finalize_setup_expected(&self) -> (Vec<U128>, Vec<U128>) {
+        let total_rounds = u128::from(round_number(
+            self.farming_start,
+            self.farming_end,
+            self.farming_end,
+        ));
+        let out = self
+            .farm_token_rates
+            .iter()
+            .map(|rate| farmed_tokens(total_rounds * self.farm_unit_emission, *rate))
+            .collect();
+        (to_U128s(&out), to_U128s(&self.farm_deposits))
     }
 
     /*****************
