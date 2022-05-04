@@ -78,7 +78,12 @@ pub struct Status {
     pub stake_tokens: Vec<U128>,
     /// the min stake
     pub stake: U128,
+    /// Amount of accumulated, not withdrawn farmed units. This is the base farming unit which
+    /// is translated into `farmed_tokens`.
     pub farmed_units: U128,
+    /// Amount of accumulated, not withdrawn farmed tokens in the same order as
+    /// contract `farm_tokens`. Computed based on `farmed_units` and the contarct
+    /// `farmed_token_rates.`
     pub farmed_tokens: Vec<U128>,
     /// timestamp of the current round.
     pub timestamp: u64,
