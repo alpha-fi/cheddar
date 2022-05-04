@@ -389,7 +389,7 @@ impl Contract {
         );
         let now = env::block_timestamp() / SECOND;
         assert!(
-            now < self.farming_start - 10 * ROUND, // TODO: change to 1 day?
+            now < self.farming_start - ROUND, // TODO: change to 1 day?
             "must be finalized at last before farm start"
         );
         for i in 0..self.farm_deposits.len() {
