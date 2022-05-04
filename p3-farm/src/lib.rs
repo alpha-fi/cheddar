@@ -190,13 +190,14 @@ impl Contract {
                 let farmed = self
                     .farm_token_rates
                     .iter()
-                    .map(|ra| U128::from(farmed_tokens(v.farmed, *ra)))
+                    .map(|rate| U128::from(farmed_tokens(v.farmed, *rate)))
                     .collect();
                 return Some(Status {
                     stake_tokens: to_U128s(&v.staked),
                     stake: v.min_stake.into(),
                     farmed_units: v.farmed.into(),
                     farmed_tokens: farmed,
+                    cheddy_nft: v.cheddy,
                     timestamp: self.farming_start + r0 * ROUND,
                 });
             }

@@ -85,6 +85,8 @@ pub struct Status {
     /// contract `farm_tokens`. Computed based on `farmed_units` and the contarct
     /// `farmed_token_rates.`
     pub farmed_tokens: Vec<U128>,
-    /// timestamp of the current round.
+    /// token ID of a staked Cheddy. Empty if user doesn't stake any Cheddy.
+    pub cheddy_nft: String,
+    /// timestamp (in seconds) of the current round.
     pub timestamp: u64,
 }
