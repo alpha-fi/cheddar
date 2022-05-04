@@ -173,6 +173,7 @@ impl Contract {
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
+            cheddar_nft: self.cheddar_nft.clone(),
             total_staked: to_U128s(&self.total_stake),
             total_farmed: to_U128s(&self.total_harvested),
             fee_rate: self.fee_rate.into(),
@@ -368,11 +369,11 @@ impl Contract {
         self.farming_end = end;
     }
 
-    /// start and end are unix timestamps (in seconds)
+    /// withdraws farming tokens back to owner
     pub fn admin_withdraw(&mut self, token: AccountId, amount: U128) {
         self.assert_owner();
         ext_ft::ft_transfer(
-            env::predecessor_account_id(),
+            self.owner_id.clone(),
             amount,
             Some("admin-withdrawing-back".to_string()),
             &token,
