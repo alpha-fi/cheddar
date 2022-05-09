@@ -163,59 +163,6 @@ impl Contract {
         self.transfer_staked_tokens(user.clone(), token_i, amount);
         return remaining;
     }
-
-    /// Implements nft receiver handler
-    #[allow(unused_variables)]
-    pub fn nft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        previous_owner_id: AccountId,
-        token_id: String,
-        msg: String,
-    ) -> PromiseOrValue<bool> {
-        if env::predecessor_account_id() != self.cheddar_nft {
-            log!("Only Cheddy NFTs ({}) are supported", self.cheddar_nft);
-            return PromiseOrValue::Value(true);
-        }
-        let v = self.vaults.get(&previous_owner_id);
-        if v.is_none() {
-            log!("Account not registered. Register prior to depositing NFT");
-            return PromiseOrValue::Value(true);
-        }
-        let mut v = v.unwrap();
-        if !v.cheddy.is_empty() {
-            log!("Account already has Cheddy deposited. You can only deposit one cheddy");
-            return PromiseOrValue::Value(true);
-        }
-        log!("Staking Cheddy NFT - you will obtain a special farming boost");
-        self.ping_all(&mut v);
-
-        v.cheddy = token_id;
-        self._recompute_stake(&mut v);
-        self.vaults.insert(&previous_owner_id, &v);
-        return PromiseOrValue::Value(false);
-    }
-
-    /// withdraw NFT to a destination account using the `nft_transfer` method.
-    pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
-        let user = env::predecessor_account_id();
-        let mut v = self.get_vault(&user);
-        assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
-        self.ping_all(&mut v);
-        ext_nft::nft_transfer(
-            receiver_id.into(),
-            v.cheddy.clone(),
-            None,
-            Some("Cheddy withdraw".to_string()),
-            &self.cheddar_nft,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        );
-
-        v.cheddy = "".into();
-        self._recompute_stake(&mut v);
-        self.vaults.insert(&user, &v);
-    }
 }
 
 // token deposits are done through NEP-141 ft_transfer_call to the NEARswap contract.
