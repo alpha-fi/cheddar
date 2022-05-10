@@ -58,6 +58,11 @@ impl Vault {
         self.farmed += self.min_stake * (reward_acc - self.reward_acc) / ACC_OVERFLOW;
         self.reward_acc = reward_acc;
     }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        all_zeros(&self.staked) && self.farmed == 0 && self.cheddy.is_empty()
+    }
 }
 
 impl Contract {
@@ -155,13 +160,30 @@ impl Contract {
         }
 
         self.ping_all(&mut v);
+        self.total_stake[token_i] -= amount;
         let remaining = v.staked[token_i] - amount;
         v.staked[token_i] = remaining;
-        self.total_stake[token_i] -= amount;
         self._recompute_stake(&mut v);
         self.vaults.insert(user, &v);
         self.transfer_staked_tokens(user.clone(), token_i, amount);
         return remaining;
+    }
+
+    pub(crate) fn _withdraw_nft(&mut self, v: &mut Vault, receiver: AccountId) {
+        assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
+        self.ping_all(v);
+        ext_nft::nft_transfer(
+            receiver,
+            v.cheddy.clone(),
+            None,
+            Some("Cheddy withdraw".to_string()),
+            &self.cheddar_nft,
+            1,
+            GAS_FOR_FT_TRANSFER,
+        );
+
+        v.cheddy = "".into();
+        self._recompute_stake(v);
     }
 }
 

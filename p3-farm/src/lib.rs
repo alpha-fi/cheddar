@@ -245,20 +245,7 @@ impl Contract {
     pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
         let user = env::predecessor_account_id();
         let mut v = self.get_vault(&user);
-        assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
-        self.ping_all(&mut v);
-        ext_nft::nft_transfer(
-            receiver_id.into(),
-            v.cheddy.clone(),
-            None,
-            Some("Cheddy withdraw".to_string()),
-            &self.cheddar_nft,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        );
-
-        v.cheddy = "".into();
-        self._recompute_stake(&mut v);
+        self._withdraw_nft(&mut v, receiver_id.into());
         self.vaults.insert(&user, &v);
     }
 
@@ -331,7 +318,7 @@ impl Contract {
 
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
-        if all_zeros(&v.staked) && v.farmed == 0 {
+        if v.is_empty() {
             self.vaults.remove(&a);
             Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
@@ -341,9 +328,13 @@ impl Contract {
         self.staked_units -= s;
         for i in 0..self.total_stake.len() {
             let amount = v.staked[i];
+            self.total_stake[i] -= amount;
             self.transfer_staked_tokens(a.clone(), i, amount);
         }
         self._withdraw_crop(&a, v.farmed);
+        if !v.cheddy.is_empty() {
+            self._withdraw_nft(&mut v, a.clone());
+        }
         self.vaults.remove(&a);
     }
 
@@ -486,7 +477,6 @@ impl Contract {
         if amount == 0 {
             return Promise::new(user);
         }
-        self.total_stake[token_i] -= amount;
         let fee = amount * self.fee_rate / 10_000;
         let amount = amount - fee;
         let token = &self.stake_tokens[token_i];
@@ -569,7 +559,7 @@ impl Contract {
                 );
                 self.fee_collected[token_i] += fee.0;
                 let full_amount = amount.0 + fee.0;
-                self.total_stake[token_i] -= full_amount;
+                self.total_stake[token_i] += full_amount;
                 self.recover_state(&user, true, token_i, full_amount);
             }
         }
@@ -792,6 +782,15 @@ mod tests {
             .predecessor_account_id(user.clone())
             .build());
         ctr.unstake(token.clone(), amount.into());
+    }
+
+    /// epoch is a timer in rounds (rather than miliseconds)
+    fn close(ctx: &mut VMContextBuilder, ctr: &mut Contract, user: &ValidAccountId) {
+        testing_env!(ctx
+            .attached_deposit(1)
+            .predecessor_account_id(user.clone())
+            .build());
+        ctr.close();
     }
 
     /// epoch is a timer in rounds (rather than miliseconds)
@@ -1267,6 +1266,8 @@ mod tests {
         let a1 = ctr.status(u1_a.clone()).unwrap();
         let a2 = ctr.status(u2_a.clone()).unwrap();
 
+        assert_eq!(ctr.total_stake[0], a1_stake[0], "token1 stake was reduced");
+        assert_eq!(ctr.total_stake[1], 2 * a1_stake[1], "token2 stake is same");
         assert_eq!(
             a1.farmed_units.0,
             4 / 2 * RATE,
@@ -1292,6 +1293,25 @@ mod tests {
             a2.farmed_units.0,
             (4 / 2 + 2) * RATE,
             "user2 gets 100% of farming"
+        );
+
+        // unstake other tokens
+        unstake(&mut ctx, &mut ctr, &u1, &acc_staking2(), a1_stake[1]);
+        assert_eq!(ctr.total_stake[0], a1_stake[0], "token1 stake was reduced");
+        assert_eq!(ctr.total_stake[1], a1_stake[1], "token2 is reduced");
+        assert!(
+            ctr.status(u1_a.clone()).is_none(),
+            "u1 should be removed when unstaking everything"
+        );
+
+        // close accounts
+        testing_env!(ctx.block_timestamp(round(7)).build());
+        close(&mut ctx, &mut ctr, &u2);
+        assert_eq!(ctr.total_stake[0], 0, "token1");
+        assert_eq!(ctr.total_stake[1], 0, "token2");
+        assert!(
+            ctr.status(u2_a.clone()).is_none(),
+            "u1 should be removed when unstaking everything"
         );
     }
 
