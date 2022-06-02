@@ -169,7 +169,7 @@ impl Contract {
         return remaining;
     }
 
-    pub(crate) fn _withdraw_nft(&mut self, v: &mut Vault, receiver: AccountId) {
+    pub(crate) fn _withdraw_nft(&mut self, user: &AccountId, v: &mut Vault, receiver: AccountId) {
         assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
         self.ping_all(v);
         ext_nft::nft_transfer(
@@ -180,7 +180,14 @@ impl Contract {
             &self.cheddar_nft,
             1,
             GAS_FOR_FT_TRANSFER,
-        );
+        )
+        .then(ext_self::withdraw_nft_callback(
+            user.clone(),
+            v.cheddy.clone(),
+            &env::current_account_id(),
+            0,
+            GAS_FOR_MINT_CALLBACK,
+        ));
 
         v.cheddy = "".into();
         self._recompute_stake(v);

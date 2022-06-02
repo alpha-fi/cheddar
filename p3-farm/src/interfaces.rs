@@ -30,6 +30,8 @@ pub trait ExtSelf {
         fee: U128,
     );
     fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128);
+    fn withdraw_nft_callback(&mut self, user: AccountId, cheddy: String);
+    fn withdraw_fees_callback(&mut self, token_i: usize, amount: U128);
     fn mint_callback(&mut self, user: AccountId, amount: U128);
     fn mint_callback_finally(&mut self);
     fn close_account(&mut self, user: AccountId);

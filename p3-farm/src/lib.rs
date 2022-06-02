@@ -210,6 +210,8 @@ impl Contract {
     // transaction methods //
 
     /// Implements nft receiver handler
+    /// This function is considered safe and will work when contract is paused to allow user
+    /// to accumulate bonuses.
     #[allow(unused_variables)]
     pub fn nft_on_transfer(
         &mut self,
@@ -242,10 +244,14 @@ impl Contract {
     }
 
     /// withdraw NFT to a destination account using the `nft_transfer` method.
+    /// This function is considered safe and will work when contract is paused to allow user
+    /// to withdraw his NFTs.
+    #[payable]
     pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
+        assert_one_yocto();
         let user = env::predecessor_account_id();
         let mut v = self.get_vault(&user);
-        self._withdraw_nft(&mut v, receiver_id.into());
+        self._withdraw_nft(&user, &mut v, receiver_id.into());
         self.vaults.insert(&user, &v);
     }
 
@@ -281,6 +287,7 @@ impl Contract {
 
     /// stakes native near.
     /// The transaction fails if near is not included in `self.stake_amount`.
+    /// This function is considered safe and will work when contract is paused.
     #[payable]
     pub fn stake_near(&mut self) {
         let a = env::predecessor_account_id();
@@ -331,8 +338,11 @@ impl Contract {
         }
         self._withdraw_crop(&a, v.farmed);
         if !v.cheddy.is_empty() {
-            self._withdraw_nft(&mut v, a.clone());
+            self._withdraw_nft(&a, &mut v, a.clone());
         }
+
+        // NOTE: we don't return deposit because it will dramatically complicate logic
+        // in case we need to recover an account.
         self.vaults.remove(&a);
     }
 
@@ -383,7 +393,14 @@ impl Contract {
                     &self.stake_tokens[i],
                     1,
                     GAS_FOR_FT_TRANSFER,
-                );
+                )
+                .then(ext_self::withdraw_fees_callback(
+                    i,
+                    self.fee_collected[i].into(),
+                    &env::current_account_id(),
+                    0,
+                    GAS_FOR_MINT_CALLBACK,
+                ));
                 self.fee_collected[i] = 0;
             }
         }
@@ -568,7 +585,6 @@ impl Contract {
     pub fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128) {
         match env::promise_result(0) {
             PromiseResult::NotReady => unreachable!(),
-
             PromiseResult::Successful(_) => {
                 // see comment in transfer_staked_callback function
             }
@@ -580,6 +596,48 @@ impl Contract {
                     self.stake_tokens[token_i],
                 );
                 self.recover_state(&user, false, token_i, amount.0);
+            }
+        }
+    }
+
+    #[private]
+    pub fn withdraw_nft_callback(&mut self, user: AccountId, cheddy: String) {
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(_) => {}
+
+            PromiseResult::Failed => {
+                log!(
+                    "transferring {} NFT failed. Recovering account state",
+                    cheddy,
+                );
+                let mut v: Vault;
+                if let Some(v2) = self.vaults.get(&user) {
+                    v = v2;
+                } else {
+                    // If the vault was closed before by another TX, then we must recover the state
+                    self.accounts_registered += 1;
+                    v = Vault::new(self.stake_tokens.len(), self.reward_acc)
+                }
+                v.cheddy = cheddy;
+                self.vaults.insert(&user, &v);
+            }
+        }
+    }
+
+    #[private]
+    pub fn withdraw_fees_callback(&mut self, token_i: usize, amount: U128) {
+        match env::promise_result(0) {
+            PromiseResult::NotReady => unreachable!(),
+            PromiseResult::Successful(_) => {}
+
+            PromiseResult::Failed => {
+                log!(
+                    "transferring fees {} {} failed. Recovering contract state",
+                    amount.0,
+                    self.stake_tokens[token_i],
+                );
+                self.fee_collected[token_i] += amount.0;
             }
         }
     }
