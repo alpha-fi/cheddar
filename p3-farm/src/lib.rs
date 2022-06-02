@@ -105,10 +105,10 @@ impl Contract {
     ) -> Self {
         assert!(farming_end > farming_start, "End must be after start");
         assert!(stake_rates[0].0 == E24, "stake_rate[0] must be 1e24");
-        assert!(
-            farm_token_rates[0].0 == E24,
-            "farm_token_rates[0] must be 1e24"
-        );
+        // assert!(
+        //     farm_token_rates[0].0 == E24,
+        //     "farm_token_rates[0] must be 1e24"
+        // );
         let stake_len = stake_tokens.len();
         let farm_len = farm_tokens.len();
         let c = Self {
@@ -327,9 +327,7 @@ impl Contract {
         let s = min_stake(&v.staked, &self.stake_rates);
         self.staked_units -= s;
         for i in 0..self.total_stake.len() {
-            let amount = v.staked[i];
-            self.total_stake[i] -= amount;
-            self.transfer_staked_tokens(a.clone(), i, amount);
+            self.transfer_staked_tokens(a.clone(), i, v.staked[i]);
         }
         self._withdraw_crop(&a, v.farmed);
         if !v.cheddy.is_empty() {
@@ -480,7 +478,7 @@ impl Contract {
         let fee = amount * self.fee_rate / 10_000;
         let amount = amount - fee;
         let token = &self.stake_tokens[token_i];
-        log!("unstaking {} {}", amount, token);
+        log!("unstaking {}, fee: {}", token, fee);
         if token == NEAR_TOKEN {
             return Promise::new(user).transfer(amount);
         }
@@ -512,6 +510,7 @@ impl Contract {
             return Promise::new(u.clone()).transfer(amount);
         }
 
+        self.total_stake[token_i] -= amount;
         let amount: U128 = amount.into();
         return ext_ft::ft_transfer(
             u.clone(),
@@ -543,9 +542,10 @@ impl Contract {
             PromiseResult::NotReady => unreachable!(),
 
             PromiseResult::Successful(_) => {
+                self.fee_collected[token_i] += fee.0;
                 log!("tokens withdrawn {}", amount.0);
                 // we can't remove the vault here, because we don't know if `mint` succeded
-                //  if it didn't succed, the the mint_callback will try to recover the vault
+                //  if it didn't succeed, the the mint_callback will try to recover the vault
                 //  and recreate it - so potentially we will send back to the user NEAR deposit
                 //  multiple times. User should call `close` second time to get back
                 //  his NEAR deposit.
@@ -557,7 +557,6 @@ impl Contract {
                     amount.0,
                     self.stake_tokens[token_i],
                 );
-                self.fee_collected[token_i] += fee.0;
                 let full_amount = amount.0 + fee.0;
                 self.total_stake[token_i] += full_amount;
                 self.recover_state(&user, true, token_i, full_amount);
