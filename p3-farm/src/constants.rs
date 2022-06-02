@@ -4,7 +4,6 @@ use near_sdk::{Balance, Gas};
 pub const TGAS: Gas = 1_000_000_000_000;
 pub const GAS_FOR_FT_TRANSFER: Gas = 10 * TGAS;
 pub const GAS_FOR_MINT_CALLBACK: Gas = 20 * TGAS;
-pub const GAS_FOR_MINT_CALLBACK_FINALLY: Gas = 8 * TGAS;
 
 pub const ONE_YOCTO: Balance = 1;
 

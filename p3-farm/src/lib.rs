@@ -103,6 +103,10 @@ impl Contract {
         fee_rate: u32,
         treasury: ValidAccountId,
     ) -> Self {
+        assert!(
+            farming_start > env::block_timestamp() / SECOND,
+            "start must be in the future"
+        );
         assert!(farming_end > farming_start, "End must be after start");
         assert!(stake_rates[0].0 == E24, "stake_rate[0] must be 1e24");
         // assert!(
@@ -431,6 +435,8 @@ impl Contract {
     /// withdraws farming tokens back to owner
     pub fn admin_withdraw(&mut self, token: AccountId, amount: U128) {
         self.assert_owner();
+        // TODO: double check if we want to enable user funds recovery here.
+        // If not then we need to check if token is in farming_tokens
         ext_ft::ft_transfer(
             self.owner_id.clone(),
             amount,

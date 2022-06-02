@@ -276,7 +276,6 @@ impl StorageManagement for Contract {
 
     /// When force == true it will close the account. Otherwise this is noop.
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
-        self.assert_is_active();
         if Some(true) == force {
             self.close();
             return true;
