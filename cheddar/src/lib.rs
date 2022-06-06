@@ -1,5 +1,4 @@
 /// Cheddar Token
-///
 /// Functionality:
 /// - No account storage complexity - Since NEAR slashed storage price by 10x
 /// it does not make sense to add that friction (storage backup per user).
@@ -16,19 +15,11 @@ use near_contract_standards::fungible_token::{
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupMap};
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::U128;
 use near_sdk::{
-    assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance, Gas,
+    assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance,
     PanicOnDefault, PromiseOrValue,
 };
-
-const TGAS: Gas = 1_000_000_000_000;
-const GAS_FOR_RESOLVE_TRANSFER: Gas = 5 * TGAS;
-const GAS_FOR_FT_TRANSFER_CALL: Gas = 25 * TGAS + GAS_FOR_RESOLVE_TRANSFER;
-const NO_DEPOSIT: Balance = 0;
-
-near_sdk::setup_alloc!();
-
 mod internal;
 mod migrations;
 mod storage;
@@ -165,9 +156,14 @@ impl Contract {
         self.metadata.set(&m);
     }
 
-    pub fn set_owner(&mut self, owner_id: ValidAccountId) {
+    pub fn set_owner(&mut self, owner_id: AccountId) {
         self.assert_owner();
-        self.owner_id = owner_id.as_ref().clone();
+        assert!(
+            env::is_valid_account_id(owner_id.as_bytes()),
+            "Account @{} is invalid!",
+            owner_id.clone()
+        );
+        self.owner_id = owner_id.clone();
     }
 
     /// Get the owner of this account.
@@ -240,17 +236,17 @@ impl Contract {
 #[near_bindgen]
 impl FungibleTokenCore for Contract {
     #[payable]
-    fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>) {
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>) {
         assert_one_yocto();
         let sender_id = env::predecessor_account_id();
         let amount: Balance = amount.into();
-        self.internal_transfer(&sender_id, receiver_id.as_ref(), amount, memo);
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
     }
 
     #[payable]
     fn ft_transfer_call(
         &mut self,
-        receiver_id: ValidAccountId,
+        receiver_id: AccountId,
         amount: U128,
         memo: Option<String>,
         msg: String,
@@ -258,22 +254,22 @@ impl FungibleTokenCore for Contract {
         assert_one_yocto();
         let sender_id = env::predecessor_account_id();
         let amount: Balance = amount.into();
-        self.internal_transfer(&sender_id, receiver_id.as_ref(), amount, memo);
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
         // Initiating receiver's call and the callback
         // ext_fungible_token_receiver::ft_on_transfer(
         ext_ft_receiver::ft_on_transfer(
             sender_id.clone(),
             amount.into(),
             msg,
-            receiver_id.as_ref(),
+            receiver_id.clone(),
             NO_DEPOSIT,
             env::prepaid_gas() - GAS_FOR_FT_TRANSFER_CALL,
         )
         .then(ext_self::ft_resolve_transfer(
             sender_id,
-            receiver_id.into(),
+            receiver_id,
             amount.into(),
-            &env::current_account_id(),
+            env::current_account_id(),
             NO_DEPOSIT,
             GAS_FOR_RESOLVE_TRANSFER,
         ))
@@ -284,8 +280,8 @@ impl FungibleTokenCore for Contract {
         self.total_supply.into()
     }
 
-    fn ft_balance_of(&self, account_id: ValidAccountId) -> U128 {
-        self._balance_of(account_id.as_ref()).into()
+    fn ft_balance_of(&self, account_id: AccountId) -> U128 {
+        self._balance_of(&account_id).into()
     }
 }
 
@@ -297,8 +293,8 @@ impl FungibleTokenResolver for Contract {
     #[private]
     fn ft_resolve_transfer(
         &mut self,
-        sender_id: ValidAccountId,
-        receiver_id: ValidAccountId,
+        sender_id: AccountId,
+        receiver_id: AccountId,
         amount: U128,
     ) -> U128 {
         let sender_id: AccountId = sender_id.into();
@@ -347,7 +343,7 @@ mod tests {
 
     const OWNER_SUPPLY: Balance = 1_000_000_000_000_000_000_000_000_000_000;
 
-    fn get_context(predecessor_account_id: ValidAccountId) -> VMContextBuilder {
+    fn get_context(predecessor_account_id: AccountId) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
         builder
             .current_account_id(accounts(0))

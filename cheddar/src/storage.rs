@@ -3,7 +3,7 @@ use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::U128;
 use near_sdk::{assert_one_yocto, env, log, near_bindgen, AccountId, Balance, Promise};
 
 // The storage size in bytes for one account.
@@ -32,7 +32,7 @@ impl Contract {
             )
             .is_some()
         {
-            env::panic("The account is already registered".as_bytes());
+            panic!("The account is already registered");
         }
     }
 
@@ -70,10 +70,7 @@ impl Contract {
                 }
                 Some((account_id, balance.near))
             } else {
-                env::panic(
-                    "Can't unregister the account with the positive balance without force"
-                        .as_bytes(),
-                )
+                panic!("Can't unregister the account with the positive balance without force")
             }
         } else {
             log!("The account {} is not registered", &account_id);
@@ -94,7 +91,7 @@ impl StorageManagement for Contract {
     #[payable]
     fn storage_deposit(
         &mut self,
-        account_id: Option<ValidAccountId>,
+        account_id: Option<AccountId>,
         registration_only: Option<bool>,
     ) -> StorageBalance {
         let amount: Balance = env::attached_deposit();
@@ -137,15 +134,16 @@ impl StorageManagement for Contract {
         if self.accounts.contains_key(&predecessor_account_id) {
             match amount {
                 Some(amount) if amount.0 > 0 => {
-                    env::panic(
-                        "The amount is greater than the available storage balance".as_bytes(),
+                    panic!(
+                        "The amount is greater than the available storage balance",
                     );
                 }
                 _ => storage_balance(),
             }
         } else {
-            env::panic(
-                format!("The account {} is not registered", &predecessor_account_id).as_bytes(),
+            panic!(
+                "The account {} is not registered", 
+                predecessor_account_id
             );
         }
     }
@@ -162,8 +160,8 @@ impl StorageManagement for Contract {
         }
     }
 
-    fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
-        if self.accounts.contains_key(account_id.as_ref()) {
+    fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
+        if self.accounts.contains_key(&account_id) {
             Some(storage_balance())
         } else {
             None
