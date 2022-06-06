@@ -294,6 +294,7 @@ impl Contract {
     /// This function is considered safe and will work when contract is paused.
     #[payable]
     pub fn stake_near(&mut self) {
+        self.assert_is_active();
         let a = env::predecessor_account_id();
         self._stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
     }
