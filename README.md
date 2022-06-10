@@ -10,4 +10,4 @@ A Defi token and farm on NEAR. Cheddar is a fun way for NEAR users to collect, s
 
 ## XCheddar token
 
-Token which allows users stake their Cheddar tokens and get some rewards for it. Base model is the same as CRV and veCRV locked tokens model. After 30-days period distribution of rewards starts and it counting from monthly reward parameter. Locked token have a virtual price depends on amount of locked/minted XCheddar tokens
+Token which allows users stake their Cheddar tokens and get some rewards for it. Base model is the same as CRV and [veCRV](https://resources.curve.fi/base-features/understanding-crv) locked tokens model. After 30-days period distribution of rewards starts and it counting from monthly reward parameter. Locked token have a virtual price depends on amount of locked/minted XCheddar tokens
