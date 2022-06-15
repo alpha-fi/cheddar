@@ -331,6 +331,7 @@ impl Contract {
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
         if v.is_empty() {
+            self.accounts_registered -= 1;
             self.vaults.remove(&a);
             Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
@@ -502,11 +503,12 @@ impl Contract {
         let fee = amount * self.fee_rate / 10_000;
         let amount = amount - fee;
         let token = &self.stake_tokens[token_i];
+        self.total_stake[token_i] -= amount;
         log!("unstaking {}, fee: {}", token, fee);
+
         if token == NEAR_TOKEN {
             return Promise::new(user).transfer(amount);
         }
-
         return ext_ft::ft_transfer(
             user.clone(),
             amount.into(),
@@ -534,7 +536,6 @@ impl Contract {
             return Promise::new(u.clone()).transfer(amount);
         }
 
-        self.total_stake[token_i] -= amount;
         let amount: U128 = amount.into();
         return ext_ft::ft_transfer(
             u.clone(),
@@ -1415,6 +1416,7 @@ mod tests {
         testing_env!(ctx
             .predecessor_account_id(u1.clone())
             .block_timestamp(round(2) + 1000)
+            .attached_deposit(1)
             .build());
         ctr.withdraw_nft(u1.clone());
 

@@ -160,7 +160,7 @@ impl Contract {
         }
 
         self.ping_all(&mut v);
-        self.total_stake[token_i] -= amount;
+        // self.total_stake is updated in transfer_staked_tokens
         let remaining = v.staked[token_i] - amount;
         v.staked[token_i] = remaining;
         self._recompute_stake(&mut v);
