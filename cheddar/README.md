@@ -20,5 +20,5 @@ You can build release version by running next scripts inside each contract folde
 ```
 rustup target add wasm32-unknown-unknown
 RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/cheddar_coin.wasm /Users/macbookpro/Documents/GitHub/xCheddar-token/xCheddar/res/cheddar_coin.wasm
+cp target/wasm32-unknown-unknown/release/cheddar_coin.wasm res/cheddar_coin.wasm
 ```
