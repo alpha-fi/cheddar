@@ -242,6 +242,7 @@ impl StorageManagement for Contract {
         account_id: Option<ValidAccountId>,
         registration_only: Option<bool>,
     ) -> StorageBalance {
+        assert!(self.is_active, "contract is not active");
         let amount: Balance = env::attached_deposit();
         let account_id = account_id
             .map(|a| a.into())

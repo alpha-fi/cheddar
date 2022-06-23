@@ -435,7 +435,9 @@ impl Contract {
     }
 
     /// withdraws farming tokens back to owner
+    #[payable]
     pub fn admin_withdraw(&mut self, token: AccountId, amount: U128) {
+        assert_one_yocto();
         self.assert_owner();
         // TODO: double check if we want to enable user funds recovery here.
         // If not then we need to check if token is in farming_tokens
@@ -447,6 +449,11 @@ impl Contract {
             1,
             GAS_FOR_FT_TRANSFER,
         );
+    }
+
+    pub fn admin_set_rates(&mut self, stake_rates: Vec<U128>) {
+        self.assert_owner();
+        self.stake_rates = stake_rates.iter().map(|x| x.0).collect();
     }
 
     pub fn finalize_setup(&mut self) {
@@ -1000,6 +1007,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_staking_unit() {
+        let u1 = acc_u1();
+        let u1_a: AccountId = u1.clone().into();
+        let (mut ctx, mut ctr) = setup_contract(u1.clone(), 0, 0);
+        finalize(&mut ctr);
+
+        let a1_stake = vec![E24, 2 * E24];
+        register_user_and_stake(&mut ctx, &mut ctr, &u1, &a1_stake, 2);
+
+        let a1 = ctr.status(u1_a.clone()).unwrap();
+        assert_eq!(a1.stake.0, 2 * E24 / 10, "u1 should have staked units!");
     }
 
     #[test]
