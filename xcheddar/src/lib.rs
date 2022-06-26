@@ -5,9 +5,8 @@ use near_contract_standards::fungible_token::FungibleToken;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::U128;
+use near_sdk::{env, log, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, Promise, PromiseOrValue};
 
-#[allow(unused_imports)]
-use near_sdk::{env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise, PromiseOrValue};
 use crate::utils::*;
 pub use crate::views::ContractMetadata;
 
@@ -16,6 +15,11 @@ mod utils;
 mod owner;
 mod views;
 mod storage_impl;
+
+#[ext_contract(ext_cheddar)]
+pub trait ExtCheddar {
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+}
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]

@@ -75,7 +75,7 @@ mod upgrade {
 
         env::setup_panic_hook();
 
-        ///assert ownership
+        /// assert ownership
         let contract: Contract = env::state_read().expect("ERR_CONTRACT_IS_NOT_INITIALIZED");
         contract.assert_owner();
 

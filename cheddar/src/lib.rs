@@ -11,7 +11,7 @@
 use near_contract_standards::fungible_token::{
     core::FungibleTokenCore,
     metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC},
-    resolver::FungibleTokenResolver,
+    core_impl::{ext_ft_receiver, ext_ft_resolver}
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupMap};
@@ -256,7 +256,8 @@ impl FungibleTokenCore for Contract {
         let amount: Balance = amount.into();
         self.internal_transfer(&sender_id, &receiver_id, amount, memo);
         // Initiating receiver's call and the callback
-        // ext_fungible_token_receiver::ft_on_transfer(
+        // ext_ft calls like this was deprecated in v4.0.0 near-sdk-rs
+        /*
         ext_ft_receiver::ft_on_transfer(
             sender_id.clone(),
             amount.into(),
@@ -273,6 +274,15 @@ impl FungibleTokenCore for Contract {
             NO_DEPOSIT,
             GAS_FOR_RESOLVE_TRANSFER,
         ))
+        */
+        ext_ft_receiver::ext(receiver_id.clone())
+        .with_static_gas(env::prepaid_gas() - GAS_FOR_FT_TRANSFER_CALL)
+        .ft_on_transfer(sender_id.clone(), amount.into(), msg)
+        .then(
+            ext_ft_resolver::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                .ft_resolve_transfer(sender_id, receiver_id, amount.into()),
+        )
         .into()
     }
 
@@ -314,26 +324,6 @@ impl FungibleTokenMetadataProvider for Contract {
     }
 }
 
-#[ext_contract(ext_ft_receiver)]
-pub trait FungibleTokenReceiver {
-    fn ft_on_transfer(
-        &mut self,
-        sender_id: AccountId,
-        amount: U128,
-        msg: String,
-    ) -> PromiseOrValue<U128>;
-}
-
-#[ext_contract(ext_self)]
-trait FungibleTokenResolver {
-    fn ft_resolve_transfer(
-        &mut self,
-        sender_id: AccountId,
-        receiver_id: AccountId,
-        amount: U128,
-    ) -> U128;
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use near_sdk::test_utils::{accounts, VMContextBuilder};
@@ -362,7 +352,7 @@ mod tests {
             .attached_deposit(1)
             .predecessor_account_id(accounts(1))
             .build());
-        contract.mint(&accounts(1).to_string(), OWNER_SUPPLY.into());
+        contract.mint(&accounts(1), OWNER_SUPPLY.into());
 
         testing_env!(context.is_view(true).build());
         assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
@@ -387,7 +377,7 @@ mod tests {
             .attached_deposit(1)
             .predecessor_account_id(accounts(2))
             .build());
-        contract.mint(&accounts(2).to_string(), OWNER_SUPPLY.into());
+        contract.mint(&accounts(2), OWNER_SUPPLY.into());
 
         testing_env!(context
             .storage_usage(env::storage_usage())
