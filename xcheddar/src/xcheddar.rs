@@ -1,18 +1,32 @@
-
 use crate::*;
 #[allow(unused_imports)]
-use crate::utils::*;
+use crate::utils::convert_from_yocto_cheddar;
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
 use near_sdk::json_types::U128;
 use near_sdk::{assert_one_yocto, env, log, Promise, PromiseResult};
 use std::cmp::{max, min};
 
+enum TransferInstruction {
+    Deposit,
+    Reward,
+    Unknown
+}
+
+impl From<String> for TransferInstruction {
+    fn from(msg: String) -> Self {
+        match &msg[..] {
+            "" => TransferInstruction::Deposit,
+            "reward" => TransferInstruction::Reward,
+            _  => TransferInstruction::Unknown
+        }
+    }
+}
+
 impl Contract {
-    pub fn internal_stake(&mut self, account_id: &AccountId, amount: Balance) {
+    pub(crate) fn internal_stake(&mut self, account_id: &AccountId, amount: Balance) {
         // check account has registered
         assert!(self.ft.accounts.contains_key(account_id), "Account @{} is not registered", account_id);
-        
+        // amount of Xcheddar that user takes from stake cheddar
         let mut minted = amount;
 
         if self.ft.total_supply != 0 {
@@ -22,8 +36,9 @@ impl Contract {
         
         assert!(minted > 0, "{}", ERR_STAKE_TOO_SMALL);
 
+        // increase locked_token_amount to staked
         self.locked_token_amount += amount;
-
+        // increase total_supply to minted = staked * P, where P = total_supply/locked_token_amount <= 1
         self.ft.internal_deposit(account_id, minted);
         log!("@{} Stake {} (~{} CHEDDAR) assets, get {} (~{} xCHEDDAR) tokens",
             account_id, 
@@ -32,9 +47,11 @@ impl Contract {
             minted,
             convert_from_yocto_cheddar(minted)
         );
+        // total_supply += amount * P, where P<=1
+        // locked_token_amount += amount
     }
 
-    pub fn internal_add_reward(&mut self, account_id: &AccountId, amount: Balance) {
+    pub(crate) fn internal_add_reward(&mut self, account_id: &AccountId, amount: Balance) {
         self.undistributed_reward += amount;
         log!("@{} add {} (~{} CHEDDAR) assets as reward", account_id, amount, convert_from_yocto_cheddar(amount));
     }
@@ -57,8 +74,11 @@ impl Contract {
         if new_reward > 0 {
             self.undistributed_reward -= new_reward;
             self.locked_token_amount += new_reward;
+            self.prev_distribution_time_in_sec = max(cur_time, self.reward_genesis_time_in_sec);
+            log!("Distribution reward is {} ", new_reward);
+        } else {
+            log!("Distribution reward is zero for this time");
         }
-        self.prev_distribution_time_in_sec = max(cur_time, self.reward_genesis_time_in_sec);
     }
 }
 
@@ -84,12 +104,16 @@ impl Contract {
         assert!(self.ft.total_supply > 0, "{}", ERR_EMPTY_TOTAL_SUPPLY);
         let unlocked = (U256::from(amount) * U256::from(self.locked_token_amount) / U256::from(self.ft.total_supply)).as_u128();
 
+        // total_supply -= amount
         self.ft.internal_withdraw(&account_id, amount);
         assert!(self.ft.total_supply >= 10u128.pow(24), "{}", ERR_KEEP_AT_LEAST_ONE_XCHEDDAR);
+        // locked_token_amount -= amount * P, where P = locked_token_amount / total_supply >=1
         self.locked_token_amount -= unlocked;
 
         log!("Withdraw {} (~{} Cheddar) from @{}", amount, convert_from_yocto_cheddar(amount), account_id);
 
+        // ext_fungible_token was deprecated at v4.0.0 near_sdk release
+        /*
         ext_fungible_token::ft_transfer(
             account_id.clone(),
             U128(unlocked),
@@ -106,6 +130,17 @@ impl Contract {
             NO_DEPOSIT,
             GAS_FOR_RESOLVE_TRANSFER,
         ))
+         */
+
+        ext_cheddar::ext(self.locked_token.clone())
+        .with_attached_deposit(ONE_YOCTO)
+        .with_static_gas(GAS_FOR_FT_TRANSFER)
+        .ft_transfer(account_id.clone(), U128(unlocked), None)   
+        .then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                .callback_post_unstake(account_id.clone(), U128(unlocked), U128(amount))
+        )
     }
 
     #[private]
@@ -164,15 +199,21 @@ impl FungibleTokenReceiver for Contract {
         let token_in = env::predecessor_account_id();
         let amount: Balance = amount.into();
         assert_eq!(token_in, self.locked_token, "{}", ERR_MISMATCH_TOKEN);
-        if msg.is_empty() {
-            // user stake
-            self.internal_stake(&sender_id, amount);
-            PromiseOrValue::Value(U128(0))
-        } else {
-            // deposit reward
-            log!("Add reward {} token with msg {}", amount, msg);
-            self.internal_add_reward(&sender_id, amount);
-            PromiseOrValue::Value(U128(0))
+        match TransferInstruction::from(msg) {
+            TransferInstruction::Deposit => {
+                // deposit for stake
+                self.internal_stake(&sender_id, amount);
+                PromiseOrValue::Value(U128(0))
+            } 
+            TransferInstruction::Reward => {
+                // deposit for reward
+                self.internal_add_reward(&sender_id, amount);
+                PromiseOrValue::Value(U128(0))
+            }
+            TransferInstruction::Unknown => {
+                log!(ERR_WRONG_TRANSFER_MSG);
+                PromiseOrValue::Value(U128(amount))
+            }
         }
     }
 }
