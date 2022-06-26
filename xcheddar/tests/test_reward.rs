@@ -185,7 +185,7 @@ fn test_reward() {
 }
 
 #[test]
-fn test_no_reward_befroe_reset_reward_genesis_time(){
+fn test_no_reward_before_reset_reward_genesis_time(){
     let (root, owner, user, cheddar_contract, xcheddar_contract) = 
         init_env(true);
     let mut total_reward = 0;

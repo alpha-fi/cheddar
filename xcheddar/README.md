@@ -2,15 +2,15 @@
 
 ### Sumary
 * Stake CHEDDAR token to lock in the contract and get XCHEDDAR on price P,  
-XCHEDDAR_amount = staked_CHEDDAR / P,  
-where P = locked_CHEDDAR_token_amount / XCHEDDAR_total_supply.  
+XCHEDDAR_amount = staked_CHEDDAR / P_staked,  
+where P_staked = locked_CHEDDAR_token_amount / XCHEDDAR_total_supply.  
 
 * Redeem CHEDDAR by unstake using XCHEDDAR token on price P,  
-redeemed_CHEDDAR = unstaked_XCHEDDAR * P,  
-where P = locked_CHEDDAR_token_amount / XCHEDDAR_total_supply. 
+redeemed_CHEDDAR = unstaked_XCHEDDAR * P_unstaked,  
+where P_unstaked = locked_CHEDDAR_token_amount / XCHEDDAR_total_supply. 
 
 * Anyone can add CHEDDAR as reward for those locked CHEDDAR users.  
-locked_CHEDDAR_token amount would increase `reward_per_month` per second after `reward_genesis_time_in_sec`.  
+locked_CHEDDAR_token amount would increase `reward_per_month` after `reward_genesis_time_in_sec`.  
 
 * Owner can modify `reward_genesis_time_in_sec` before it passed.
 
