@@ -60,8 +60,7 @@ impl Contract {
     pub(crate) fn try_distribute_reward(&self, cur_timestamp_in_sec: u32) -> Balance {
         if cur_timestamp_in_sec > self.reward_genesis_time_in_sec && cur_timestamp_in_sec > self.prev_distribution_time_in_sec {
             //reward * (duration between previous distribution and current time)
-            //reward_per_month = reward_per_sec * DURATION_30_DAYS_IN_SEC
-            let ideal_amount = self.monthly_reward * ((cur_timestamp_in_sec - self.prev_distribution_time_in_sec) / DURATION_30DAYS_IN_SEC) as u128;
+            let ideal_amount = self.reward_per_second * (cur_timestamp_in_sec - self.prev_distribution_time_in_sec) as u128;
             min(ideal_amount, self.undistributed_reward)
         } else {
             0
@@ -215,5 +214,101 @@ impl FungibleTokenReceiver for Contract {
                 PromiseOrValue::Value(U128(amount))
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const E24:u128 = 1_000_000_000_000_000_000_000_000;
+
+    fn proportion(a:u128, numerator:u128, denominator:u128) -> u128 {
+        (U256::from(a) * U256::from(numerator) / U256::from(denominator)).as_u128()
+    }
+    fn compute_p(total_locked: u128, total_supply:u128, staked:bool) -> u128 {
+        if staked == true {
+            total_supply * 100_000_000 / total_locked
+        } else {
+            total_locked * 100_000_000 / total_supply
+        }
+    }
+    #[test]
+    fn test_P_value() {
+
+        let mut total_reward:u128 = 50_000 * E24;
+        let mut total_locked:u128 = 52_500 * E24;
+        let mut total_supply:u128 = 50_000 * E24;
+        let reward_per_second:u128 = 10000000000000000000000; //0.01
+
+        let p_unstaked = compute_p(total_locked, total_supply, false); // 1.05
+        let p_staked = compute_p(total_locked, total_supply, true); // 1/1.05
+
+        // stake 100
+        let amount:u128 = 100 * E24; //100
+        let minted = proportion(amount, total_supply, total_locked);
+        total_locked += amount;
+        total_supply += minted;
+        assert_eq!(p_staked, compute_p(total_locked, total_supply, true));
+        assert_eq!(p_unstaked, compute_p(total_locked, total_supply, false));
+        println!(
+            " P_staked: {}\n P_unstaked: {}\n P-deviation: {}\n locked: {}\n supply: {}",
+            compute_p(total_locked, total_supply, true),
+            compute_p(total_locked, total_supply, false),
+            convert_from_yocto_cheddar((p_staked - compute_p(total_locked, total_supply, true))),
+            total_locked,
+            total_supply
+        );
+
+        // stake 1000
+        let amount:u128 = 1000 * E24; //1000
+        let minted = proportion(amount, total_supply, total_locked);
+        total_locked += amount;
+        total_supply += minted;
+        assert_eq!(p_staked, compute_p(total_locked, total_supply, true));
+        assert_eq!(p_unstaked, compute_p(total_locked, total_supply, false));
+        println!(
+            " P_staked: {}\n P_unstaked: {}\n P-deviation: {}\n locked: {}\n supply: {}",
+            compute_p(total_locked, total_supply, true),
+            compute_p(total_locked, total_supply, false),
+            convert_from_yocto_cheddar((p_staked - compute_p(total_locked, total_supply, true))),
+            total_locked,
+            total_supply
+        );
+        
+        // unstake 10000 after 1000 seconds
+        // distribution
+        total_locked += reward_per_second * 1000;
+        let amount:u128 = 10000 * E24; //10000
+        // unstaking
+        let unlocked = proportion(amount, total_locked, total_supply);
+        total_locked -= unlocked;
+        total_supply -= amount;
+        println!(
+            " P_staked: {}\n P_unstaked: {}\n P-deviation: {}\n locked: {}\n supply: {}",
+            compute_p(total_locked, total_supply, true),
+            compute_p(total_locked, total_supply, false),
+            convert_from_yocto_cheddar((p_staked - compute_p(total_locked, total_supply, true))),
+            total_locked,
+            total_supply
+        );
+
+        // unstake all and keep 1 token in supply after 1000 seconds
+        // distribution
+        total_locked += reward_per_second * 1000;
+        let amount:u128 = 41046619047619047619047619047;
+        // unstaking
+        let unlocked = proportion(amount, total_locked, total_supply);
+        total_locked -= unlocked;
+        total_supply -= amount;
+        println!(
+            " P_staked: {}\n P_unstaked: {}\n P-deviation: {}\n locked: {}\n supply: {}",
+            compute_p(total_locked, total_supply, true),
+            compute_p(total_locked, total_supply, false),
+            convert_from_yocto_cheddar((p_staked - compute_p(total_locked, total_supply, true))),
+            total_locked,
+            total_supply
+        );
+        
+
+
     }
 }
