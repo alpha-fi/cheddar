@@ -22,7 +22,7 @@ pub struct ContractMetadata {
     pub supply: U128,
     pub prev_distribution_time_in_sec: u32,
     pub reward_genesis_time_in_sec: u32,
-    pub monthly_reward: U128,
+    pub reward_per_second: U128,
     /// current account number in contract
     pub account_number: u64,
 }
@@ -45,7 +45,7 @@ pub struct ContractMetadataHumanReadable {
     pub supply: U128,
     pub prev_distribution_time: DateTime<Utc>,
     pub reward_genesis_time: DateTime<Utc>,
-    pub monthly_reward: U128,
+    pub reward_per_second: U128,
     /// current account number in contract
     pub account_number: u64,
 }
@@ -68,7 +68,7 @@ impl Contract {
             supply: self.ft.total_supply.into(),
             prev_distribution_time_in_sec: self.prev_distribution_time_in_sec,
             reward_genesis_time_in_sec: self.reward_genesis_time_in_sec,
-            monthly_reward: self.monthly_reward.into(),
+            reward_per_second: self.reward_per_second.into(),
             account_number: self.account_number,
         }
     }
@@ -88,7 +88,7 @@ impl Contract {
             supply: convert_from_yocto_cheddar(self.ft.total_supply).into(),
             prev_distribution_time: convert_timestamp_to_datetime(self.prev_distribution_time_in_sec),
             reward_genesis_time: convert_timestamp_to_datetime(self.reward_genesis_time_in_sec),
-            monthly_reward: convert_from_yocto_cheddar(self.monthly_reward).into(),
+            reward_per_second: convert_from_yocto_cheddar(self.reward_per_second).into(),
             account_number: self.account_number,
         }
     }

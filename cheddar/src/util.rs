@@ -1,5 +1,5 @@
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{Balance, Gas};
+use near_sdk::Gas;
 use uint::construct_uint;
 
 pub type U128String = U128;
@@ -12,7 +12,6 @@ pub const ONE_TERA: Gas = Gas(1_000_000_000_000);
 pub const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(5_000_000_000_000);
 /// 30 Tgas (25 Tgas + GAS_FOR_RESOLVE_TRANSFER)
 pub const GAS_FOR_FT_TRANSFER_CALL: Gas = Gas(30_000_000_000_000);
-pub const NO_DEPOSIT: Balance = 0;
 
 construct_uint! {
     /// 256-bit unsigned integer.

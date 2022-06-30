@@ -98,9 +98,11 @@ export XCHEDDAR_OWNER=
 export USER_ACCOUNT=
 export GAS=100000000000000
 export HUNDRED_CHEDDAR=100000000000000000000000000
+# 0.01
+export TEN_MILLI_CHEDDAR=10000000000000000000000
 export ONE_CHEDDAR=1000000000000000000000000
 export FIVE_CHEDDAR=5000000000000000000000000
-export EIGHT_CHEDDAR=8000000000000000000000000
+export TEN_CHEDDAR=10000000000000000000000000
 
 near call $XCHEDDAR_TOKEN new '{"owner_id": "'$XCHEDDAR_OWNER'", "locked_token": "'$CHEDDAR_TOKEN'"}' --account_id=$XCHEDDAR_TOKEN
 ```
@@ -142,24 +144,23 @@ near call $CHEDDAR_TOKEN ft_transfer_call '{"receiver_id": "'$XCHEDDAR_TOKEN'", 
 
 #### add 100 CHEDDAR as a reward
 ```bash
-near call $CHEDDAR_TOKEN ft_transfer_call '{"receiver_id": "'$XCHEDDAR_TOKEN'", "amount": "'$HUNDRED_CHEDDAR'", "msg": "reward"}' --account_id=$USER_ACCOUNT --depositYocto=1 --gas=$GAS
+near call $CHEDDAR_TOKEN ft_transfer_call '{"receiver_id": "'$XCHEDDAR_TOKEN'", "amount": "'$HUNDRED_CHEDDAR'", "msg": "reward"}' --account_id=$XCHEDDAR_OWNER --depositYocto=1 --gas=$GAS
 ```
 
 #### owner reset reward genesis time
 ```bash
 near call $XCHEDDAR_TOKEN get_owner '' --account_id=$XCHEDDAR_OWNER 
-# set to 2022-06-06 00:00:00 GMT time
-near call $XCHEDDAR_TOKEN reset_reward_genesis_time_in_sec '{"reward_genesis_time_in_sec": 1654438300}' --account_id=$XCHEDDAR_OWNER
+near call $XCHEDDAR_TOKEN reset_reward_genesis_time_in_sec '{"reward_genesis_time_in_sec": 1656578165}' --account_id=$XCHEDDAR_OWNER
 ```
 Note: would return false if already past old genesis time or the new genesis time is a past time.
 
-#### owner modify reward_per_month to 5 CHEDDAR
+#### owner modify reward_per_second to 5 CHEDDAR
 ```bash
-near call $XCHEDDAR_TOKEN modify_monthly_reward '{"monthly_reward": "'$FIVE_CHEDDAR'", "distribute_before_change": true}' --account_id=$XCHEDDAR_OWNER --gas=$GAS
+near call $XCHEDDAR_TOKEN set_reward_per_second '{"reward_per_second": "'$TEN_MILLI_CHEDDAR'", "distribute_before_change": true}' --account_id=$XCHEDDAR_OWNER --gas=$GAS
 ```
-Note: If `distribute_before_change` is true, contract will sync up reward distribution using the old `reward_per_month` at call time before changing to the new one.
+Note: If `distribute_before_change` is true, contract will sync up reward distribution using the old `reward_per_second` at call time before changing to the new one.
 
-#### unstake 8 XCHEDDAR get CHEDDAR and reward back
+#### unstake 10 XCHEDDAR get CHEDDAR and reward back
 ```bash
-near call $XCHEDDAR_TOKEN unstake '{"amount": "'$EIGHT_CHEDDAR'"}' --account_id=$USER_ACCOUNT --depositYocto=1 --gas=$GAS
+near call $XCHEDDAR_TOKEN unstake '{"amount": "'$TEN_CHEDDAR'"}' --account_id=$USER_ACCOUNT --depositYocto=1 --gas=$GAS
 ```

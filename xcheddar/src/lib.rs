@@ -4,8 +4,9 @@ use near_contract_standards::fungible_token::metadata::{
 use near_contract_standards::fungible_token::FungibleToken;
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::LazyOption;
 use near_sdk::json_types::U128;
-use near_sdk::{env, log, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, Promise, PromiseOrValue};
+use near_sdk::{env, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, PromiseOrValue};
 
 use crate::utils::*;
 pub use crate::views::ContractMetadata;
@@ -35,8 +36,9 @@ pub struct Contract {
     pub prev_distribution_time_in_sec: u32,
     /// when would the reward starts to distribute
     pub reward_genesis_time_in_sec: u32,
-    /// 30-days period reward
-    pub monthly_reward: Balance,
+    /// reward per second. Distributed into locked_amount reward = time_diff * reward_per_second
+    /// where time_diff = cur_timestamp - prev_distribution_time_in_sec
+    pub reward_per_second: Balance,
     /// current account number in contract
     pub account_number: u64,
 }
@@ -56,7 +58,7 @@ impl Contract {
             locked_token_amount: 0,
             prev_distribution_time_in_sec: initial_reward_genisis_time,
             reward_genesis_time_in_sec: initial_reward_genisis_time,
-            monthly_reward: 0,
+            reward_per_second: 0,
             account_number: 0,
         }
     }

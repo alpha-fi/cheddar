@@ -18,12 +18,12 @@ impl Contract {
         self.owner_id.clone()
     }
 
-    pub fn modify_monthly_reward(&mut self, monthly_reward: U128, distribute_before_change: bool) {
+    pub fn set_reward_per_second(&mut self, reward_per_second: U128, distribute_before_change: bool) {
         self.assert_owner();
         if distribute_before_change {
             self.distribute_reward();
         }
-        self.monthly_reward = monthly_reward.into();
+        self.reward_per_second = reward_per_second.into();
     }
 
     pub fn reset_reward_genesis_time_in_sec(&mut self, reward_genesis_time_in_sec: u32) {

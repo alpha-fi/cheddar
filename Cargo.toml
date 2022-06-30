@@ -5,7 +5,8 @@ members = [
 #    "./p1-staking-pool-dyn",
     "./p2-token-staking-fixed",
     "./p3-farm",
-    "./xcheddar"
+    "./xcheddar",
+    "./p4-pool"
 ]
 
 

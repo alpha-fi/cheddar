@@ -10,14 +10,13 @@
 ///
 use near_contract_standards::fungible_token::{
     core::FungibleTokenCore,
-    metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC},
-    core_impl::{ext_ft_receiver, ext_ft_resolver}
+    metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC}, 
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupMap};
 use near_sdk::json_types::U128;
 use near_sdk::{
-    assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance,
+    assert_one_yocto, env, log, ext_contract, near_bindgen, AccountId, Balance,
     PanicOnDefault, PromiseOrValue,
 };
 mod internal;
@@ -294,27 +293,45 @@ impl FungibleTokenCore for Contract {
         self._balance_of(&account_id).into()
     }
 }
+#[ext_contract(ext_ft_receiver)]
+pub trait FungibleTokenReceiver {
+    /// Called by fungible token contract after `ft_transfer_call` was initiated by
+    /// `sender_id` of the given `amount` with the transfer message given in `msg` field.
+    /// The `amount` of tokens were already transferred to this contract account and ready to be used.
+    ///
+    /// The method must return the amount of tokens that are *not* used/accepted by this contract from the transferred
+    /// amount. Examples:
+    /// - The transferred amount was `500`, the contract completely takes it and must return `0`.
+    /// - The transferred amount was `500`, but this transfer call only needs `450` for the action passed in the `msg`
+    ///   field, then the method must return `50`.
+    /// - The transferred amount was `500`, but the action in `msg` field has expired and the transfer must be
+    ///   cancelled. The method must return `500` or panic.
+    ///
+    /// Arguments:
+    /// - `sender_id` - the account ID that initiated the transfer.
+    /// - `amount` - the amount of tokens that were transferred to this account in a decimal string representation.
+    /// - `msg` - a string message that was passed with this transfer call.
+    ///
+    /// Returns the amount of unused tokens that should be returned to sender, in a decimal string representation.
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128>;
+}
 
-#[near_bindgen]
-impl FungibleTokenResolver for Contract {
+#[ext_contract(ext_ft_resolver)]
+pub trait FungibleTokenResolver {
     /// Returns the amount of burned tokens in a corner case when the sender
     /// has deleted (unregistered) their account while the `ft_transfer_call` was still in flight.
     /// Returns (Used token amount, Burned token amount)
-    #[private]
     fn ft_resolve_transfer(
         &mut self,
         sender_id: AccountId,
         receiver_id: AccountId,
         amount: U128,
-    ) -> U128 {
-        let sender_id: AccountId = sender_id.into();
-        let (used_amount, burned_amount) =
-            self.ft_resolve_transfer_adjust(&sender_id, receiver_id, amount);
-        if burned_amount > 0 {
-            log!("{} tokens burned", burned_amount);
-        }
-        return used_amount.into();
-    }
+    ) -> U128;
 }
 
 #[near_bindgen]
