@@ -23,18 +23,21 @@ pub struct Vault {
     /// farmed units are translated to all `Contract.farm_tokens` based on
     /// `Contract.farm_token_rates`
     pub farmed: Balance,
+    /// farmed tokens which failed to withdraw to the user.
+    pub farmed_recovered: Vec<Balance>,
     /// Cheddy NFT deposited to get an extra boost. Only one Cheddy can be deposited to a
     /// single acocunt.
     pub cheddy: String,
 }
 
 impl Vault {
-    pub fn new(staked_len: usize, reward_acc: Balance) -> Self {
+    pub fn new(staked_len: usize, farmed_len: usize, reward_acc: Balance) -> Self {
         Self {
             reward_acc,
             staked: vec![0; staked_len],
             min_stake: 0,
             farmed: 0,
+            farmed_recovered: vec![0; farmed_len],
             cheddy: "".into(),
         }
     }

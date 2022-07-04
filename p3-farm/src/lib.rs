@@ -366,7 +366,8 @@ impl Contract {
     }
 
     /** transfers harvested tokens to the user
-    / NOTE: the destination account must be registered on CHEDDAR first!
+    / NOTE: the destination account must be registered to all tokens which require registration,
+    /       otherwise the transfer will fail
     / NOTE: callers MUST set user `vault.farmed_units` to zero prior to the call
     /       because in case of failure the callbacks will re-add rewards to the vault */
     fn _withdraw_crop(&mut self, user: &AccountId, farmed_units: u128) {
@@ -632,7 +633,7 @@ impl Contract {
                 } else {
                     // If the vault was closed before by another TX, then we must recover the state
                     self.accounts_registered += 1;
-                    v = Vault::new(self.stake_tokens.len(), self.reward_acc)
+                    v = self.new_vault();
                 }
                 v.cheddy = cheddy;
                 self.vaults.insert(&user, &v);
@@ -658,14 +659,14 @@ impl Contract {
     }
 
     fn recover_state(&mut self, user: &AccountId, is_staked: bool, token_i: usize, amount: u128) {
-        let mut v;
-        if let Some(v2) = self.vaults.get(&user) {
-            v = v2;
-        } else {
-            // If the vault was closed before by another TX, then we must recover the state
-            self.accounts_registered += 1;
-            v = Vault::new(self.stake_tokens.len(), self.reward_acc)
-        }
+        let mut v = match self.vaults.get(&user) {
+            Some(v2) => v2,
+            _ => {
+                // If the vault was closed before by another TX, then we must recover the state
+                self.accounts_registered += 1;
+                self.new_vault()
+            }
+        };
         if is_staked {
             v.staked[token_i] += amount;
             let s = min_stake(&v.staked, &self.stake_rates);
@@ -675,8 +676,7 @@ impl Contract {
             }
         } else {
             self.total_harvested[token_i] -= amount;
-            // TODO: maybe we should add a list of harvested tokens which still have to be withdrawn?
-            //     v.farmed[token_i] += amount;
+            v.farmed[token_i] += amount;
         }
 
         self.vaults.insert(user, &v);
@@ -694,10 +694,17 @@ impl Contract {
         )
     }
 
+    fn new_vault(&self) -> Vault {
+        Vault::new(
+            self.stake_tokens.len(),
+            self.farm_tokens.len(),
+            self.reward_acc,
+        )
+    }
+
     /// creates new empty account. User must deposit tokens using transfer_call
     fn create_account(&mut self, user: &AccountId) {
-        self.vaults
-            .insert(&user, &Vault::new(self.stake_tokens.len(), self.reward_acc));
+        self.vaults.insert(&user, &self.new_vault());
         self.accounts_registered += 1;
     }
 
