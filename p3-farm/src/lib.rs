@@ -696,6 +696,7 @@ impl Contract {
             v.farmed_recovered[token_i] += amount;
         }
 
+        self._recompute_stake(&mut v);
         self.vaults.insert(user, &v);
     }
 
