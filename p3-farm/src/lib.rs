@@ -381,6 +381,23 @@ impl Contract {
         }
     }
 
+    /** Withdraws harvested {token} to the user, which faild to transfer in a past call,
+     *  for example due to missing token registration (some tokens require registration
+     *  prior to receiving transfers).
+     *  This function doesn't call crop an it doesn't translate outstanding farmed units into
+     *  harvested tokens.
+     */
+    pub fn withdraw_farmed_recovered(&mut self, token: &AccountId) {
+        self.assert_is_active();
+        let a = env::predecessor_account_id();
+        let mut v = self.get_vault(&a);
+        let token_i = find_acc_idx(token, &self.farm_tokens);
+        let amount = v.farmed_recovered[token_i];
+        assert!(amount > 0, "user {} balance is zero", token);
+        v.farmed_recovered[token_i] = 0;
+        self.transfer_farmed_tokens(&a, token_i, amount);
+    }
+
     /// Returns the amount of collected fees which are not withdrawn yet.
     pub fn get_collected_fee(&self) -> Vec<U128> {
         to_U128s(&self.fee_collected)
@@ -676,7 +693,7 @@ impl Contract {
             }
         } else {
             self.total_harvested[token_i] -= amount;
-            v.farmed[token_i] += amount;
+            v.farmed_recovered[token_i] += amount;
         }
 
         self.vaults.insert(user, &v);
