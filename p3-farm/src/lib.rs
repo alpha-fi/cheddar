@@ -657,29 +657,6 @@ impl Contract {
         }
     }
 
-    // // TODO: remove?
-    // #[private]
-    // pub fn close_account(&mut self, user: AccountId) {
-    //     let mut all_good = true;
-    //     for i in 0..env::promise_results_count() {
-    //         match env::promise_result(i) {
-    //             PromiseResult::Failed => all_good = false,
-    //             _ => {}
-    //         }
-    //     }
-    //     if !all_good {
-    //         return;
-    //     }
-    //     if let Some(v) = self.vaults.get(&user) {
-    //         if all_zeros(&v.staked) && v.farmed == 0 {
-    //             log!("returning storage deposit");
-    //             self.vaults.remove(&user);
-    //             self.accounts_registered -= 1;
-    //             Promise::new(user).transfer(STORAGE_COST);
-    //         }
-    //     }
-    // }
-
     fn recover_state(&mut self, user: &AccountId, is_staked: bool, token_i: usize, amount: u128) {
         let mut v;
         if let Some(v2) = self.vaults.get(&user) {
