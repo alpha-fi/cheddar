@@ -653,6 +653,7 @@ impl Contract {
                     v = self.new_vault();
                 }
                 v.cheddy = cheddy;
+                self._recompute_stake(&mut v);
                 self.vaults.insert(&user, &v);
             }
         }
