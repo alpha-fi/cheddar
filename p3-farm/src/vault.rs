@@ -218,7 +218,8 @@ impl FungibleTokenReceiver for Contract {
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
-        self.assert_is_active();
+        assert!(self.is_active, "contract is not active");
+
         let token = env::predecessor_account_id();
         assert!(
             token != NEAR_TOKEN,

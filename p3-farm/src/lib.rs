@@ -108,11 +108,7 @@ impl Contract {
             "start must be in the future"
         );
         assert!(farming_end > farming_start, "End must be after start");
-        assert!(stake_rates[0].0 == E24, "stake_rate[0] must be 1e24");
-        // assert!(
-        //     farm_token_rates[0].0 == E24,
-        //     "farm_token_rates[0] must be 1e24"
-        // );
+        // assert!(stake_rates[0].0 == E24, "stake_rate[0] must be 1e24");
         let stake_len = stake_tokens.len();
         let farm_len = farm_tokens.len();
         let c = Self {
