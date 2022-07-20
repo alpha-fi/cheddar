@@ -9,6 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 uint = { version = "0.9.0", default-features = false }
