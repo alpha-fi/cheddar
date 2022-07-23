@@ -126,6 +126,7 @@ impl Contract {
             "start must be in the future"
         );
         assert!(farming_end > farming_start, "End must be after start");
+        assert!(cheddar_rate > 0, "cheddar_rate should be positive");
 
         let stake_len = stake_nft_tokens.len();
         let farm_len = farm_tokens.len();
@@ -673,14 +674,9 @@ impl Contract {
             );
             // recover cheddar
             self.total_cheddar_stake += amount.0;
-            let mut v = match self.vaults.get(&user) {
-                Some(v2) => v2,
-                _ => {
-                    // If the vault was closed before by another TX, then we must recover the state
-                    self.accounts_registered += 1;
-                    self.new_vault()
-                }
-            };
+            
+            let mut v = self.recovered_vault(&user);
+
             v.total_cheddar_staked += amount.0;
             // TODO - remove this recompute?
             self._recompute_stake(&mut v);
@@ -696,14 +692,8 @@ impl Contract {
                 cheddy,
             );
             // recover cheddy NFT
-            let mut v = match self.vaults.get(&user) {
-                Some(v2) => v2,
-                _ => {
-                    // If the vault was closed before by another TX, then we must recover the state
-                    self.accounts_registered += 1;
-                    self.new_vault()
-                }
-            };
+            let mut v = self.recovered_vault(&user);
+
             v.cheddy = cheddy;
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
@@ -718,7 +708,19 @@ impl Contract {
                 amount.0,
                 self.stake_nft_tokens[token_i],
             );
+            
             self.fee_collected[token_i] += amount.0;
+        }
+    }
+
+    fn recovered_vault(user: &AccountId) -> Vault {
+        match self.vaults.get(user) {
+            Some(vault) => vault,
+            None => {
+                // If the vault was closed before by another TX, then we must recover the state
+                self.accounts_registered += 1;
+                self.new_vault()
+            }
         }
     }
 
@@ -733,14 +735,7 @@ impl Contract {
         token_id: Option<TokenId>,
         amount: Option<u128>
     ) {
-        let mut v = match self.vaults.get(&user) {
-            Some(v2) => v2,
-            _ => {
-                // If the vault was closed before by another TX, then we must recover the state
-                self.accounts_registered += 1;
-                self.new_vault()
-            }
-        };
+        let mut v = self.recovered_vault(&user);
 
         // NFT contract id recovered
         if is_staked {
@@ -750,6 +745,7 @@ impl Contract {
             // if diff > 0 {
             //     self.staked_nft_units += diff;
             // }
+        
         // FT contract id recovered
         } else {
             let amount = amount.unwrap();
