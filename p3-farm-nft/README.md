@@ -26,6 +26,7 @@ Let's define a common variables:
 ```sh
 # address of the farm
 FARM=
+CHEDDAR_RATE=
 # reward token address
 CHEDDAR=token-v3.cheddar.testnet
 REF=ref.fakes.testnet
@@ -38,7 +39,7 @@ CHEDDY_NFT_CONTRACT=cheddy.testnet
 # owner
 OWNER=
 # user
-USER=$USER
+USER=me.testnet
 ```
 
 1. Register in the farm:
@@ -50,6 +51,10 @@ USER=$USER
 2. Stake tokens:
 
    ```bash
+   # Add required Cheddar to be able to stake NFT
+   near call $CHEDDAR ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"'$CHEDDAR_RATE'", "msg": "cheddar stake"}' --accountId $USER --depositYocto 1 --gas=200000000000000
+      
+   # stake
    near call $STAKEING_NFT_CONTRACT_ONE nft_transfer_call '{"sender_id": "'$USER'", "previous_owner_id":"'$USER'", "token_id":"'$TOKEN_ID_ONE'", "msg": "to farm"}' --accountId $USER --depositYocto 1 --gas=200000000000000
    ```
    - Add your cheddy boost!
