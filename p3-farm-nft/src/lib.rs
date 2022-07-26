@@ -2059,23 +2059,5 @@ mod tests {
         assert!(ctr.status(user_1.clone()).is_none());
         assert!(ctr.status(user_2.clone()).is_none());
         assert!(ctr.status(user_3.clone()).is_none());
-
-
-
-
-        // // withdraw nft during round 3
-        // testing_env!(ctx
-        //     .predecessor_account_id(user_1.clone())
-        //     .block_timestamp(round(2) + 1000)
-        //     .attached_deposit(1)
-        //     .build());
-        // ctr.withdraw_boost_nft(user_1.clone());
     }
 }
-
-/*
-1$ * 60minutes * 24hours * 365days / N tokens * token_price * 100 = 
-526% APR (10 tokens staked / token price = 1$)
-52.6% APR (100 tokens staked / token price = 1$)
-5.26% APR (1000 tokens staked / token price = 1$)
-*/
