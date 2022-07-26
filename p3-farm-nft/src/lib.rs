@@ -126,7 +126,7 @@ impl Contract {
             "start must be in the future"
         );
         assert!(farming_end > farming_start, "End must be after start");
-        assert!(cheddar_rate > 0, "cheddar_rate should be positive");
+        assert!(cheddar_rate > U128(0), "cheddar_rate should be positive");
 
         let stake_len = stake_nft_tokens.len();
         let farm_len = farm_tokens.len();
@@ -538,6 +538,7 @@ impl Contract {
             U128(self.cheddar_rate)
         };
 
+
         self.total_cheddar_stake -= transfered_amount.0;
         log!("@{} unstake Cheddar locked deposit ( {:?} )", user.clone(), transfered_amount);
 
@@ -545,6 +546,7 @@ impl Contract {
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
             .ft_transfer(user.clone(), transfered_amount, Some("withdraw staked Cheddar".to_string()))
+
         .then(Self::ext(env::current_account_id())
             .with_static_gas(GAS_FOR_CALLBACK)
             .transfer_staked_cheddar_callback(
@@ -674,10 +676,11 @@ impl Contract {
             );
             // recover cheddar
             self.total_cheddar_stake += amount.0;
-            
+
             let mut v = self.recovered_vault(&user);
 
             v.total_cheddar_staked += amount.0;
+
             // TODO - remove this recompute?
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
@@ -713,7 +716,7 @@ impl Contract {
         }
     }
 
-    fn recovered_vault(user: &AccountId) -> Vault {
+    fn recovered_vault(&mut self, user: &AccountId) -> Vault {
         match self.vaults.get(user) {
             Some(vault) => vault,
             None => {
@@ -799,7 +802,7 @@ mod tests {
     use near_contract_standards::non_fungible_token::core::NonFungibleTokenReceiver;
     use near_contract_standards::storage_management::StorageManagement;
     use near_sdk::test_utils::{accounts, VMContextBuilder};
-    use near_sdk::{testing_env, Balance};
+    use near_sdk::{testing_env, Balance, Gas};
     use near_sdk::MockedBlockchain;
     use serde::de::IntoDeserializer;
     use std::convert::TryInto;
@@ -844,13 +847,12 @@ mod tests {
         "user_owner".to_string().try_into().unwrap()
     }
 
-    /// half of the block round
-    // const ROUND_NS_H: u64 = ROUND_NS / 2;
+
     /// first and last round
     const END: i64 = 10;
     const RATE: u128 = E24 * 2; // 2 farming_units / round (60s)
     const BOOST: u32 = 250;
-    const CHEDDAR_RATE: u128 = 555 * E24;
+    const CHEDDAR_RATE: u128 = 555 * E24; // Cheddar amount required per 1 token stake
 
     fn round(r: i64) -> u64 {
         let r: u64 = (10 + r).try_into().unwrap();
@@ -863,7 +865,9 @@ mod tests {
         deposit_dec: u128,
         fee_rate: u32,
         stake_nft_tokens: Option<Vec<AccountId>>,
-        stake_rates: Option<Vec<u128>>
+        stake_rates: Option<Vec<u128>>,
+        farm_unit_emission: u128,
+        total_rounds: i64
     ) -> (VMContextBuilder, Contract) {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
@@ -871,11 +875,11 @@ mod tests {
             acc_owner(),
             stake_nft_tokens.unwrap_or_else(||vec![acc_staking1(), acc_staking2()]), // staking nft tokens
             to_U128s(&stake_rates.unwrap_or_else(||vec![E24, E24 / 10])), // staking rates
-            RATE.into(),        // farm_unit_emission
+            U128(farm_unit_emission),        // farm_unit_emission
             vec![acc_cheddar(), acc_farming2()], // farming tokens
             to_U128s(&vec![E24, E24 / 2]),  // farming rates
             round(0) / SECOND,                 // farming start
-            round(END) / SECOND,                 // farmnig end
+            round(total_rounds) / SECOND,        // farming end
             acc_nft_cheddy(),                    // cheddy nft
             BOOST,                         // cheddy boost
             U128(CHEDDAR_RATE),                // cheddar charge per 1 staked NFT
@@ -928,13 +932,14 @@ mod tests {
         ctr: &mut Contract,
         user: &AccountId,
         nft_token_contract: &AccountId,
-        token_id: String,
+        token_id: Option<String>,
     ) {
         testing_env!(ctx
             .attached_deposit(1)
             .predecessor_account_id(user.clone())
+            .prepaid_gas(Gas(300000000000000))
             .build());
-        ctr.unstake(nft_token_contract, Some(token_id));
+        ctr.unstake(nft_token_contract, token_id);
     }
 
     /// epoch is a timer in rounds (rather than miliseconds)
@@ -988,7 +993,9 @@ mod tests {
             5, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
         assert_eq!(ctr.is_active, true);
         ctr.set_active(false);
@@ -1003,14 +1010,16 @@ mod tests {
             0,
             1,
             None,
-            None
+            None,
+            RATE,
+            END
         );
         ctr.set_active(false);
     }
 
-    fn finalize(ctr: &mut Contract) {
-        ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
-        ctr._setup_deposit(&acc_farming2().into(), 10 * E24);
+    fn finalize(ctr: &mut Contract, farm_deposits: Vec<u128>) {
+        ctr._setup_deposit(&acc_cheddar().into(), farm_deposits[0]);
+        ctr._setup_deposit(&acc_farming2().into(), farm_deposits[1]);
         ctr.finalize_setup();
     }
 
@@ -1021,13 +1030,15 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
         assert_eq!(
             ctr.setup_finalized, false,
             "at the beginning setup mut not be finalized"
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
         assert_eq!(ctr.setup_finalized, true)
     }
 
@@ -1039,7 +1050,9 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
         ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
         ctr._setup_deposit(&acc_farming2().into(), 10 * E24);
@@ -1050,21 +1063,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected deposit for token cheddar is 20000000000000000000000000")]
     fn test_finalize_setup_wrong_deposit() {
-        let (_, mut ctr) = setup_contract(accounts(1), 0, 0, None, None);
+        let (_, mut ctr) = setup_contract(accounts(1), 0, 0, None, None, RATE, END);
         ctr._setup_deposit(&acc_cheddar().into(), 10 * E24);
     }
 
     #[test]
     #[should_panic(expected = "Deposit for token farming_token not done")]
     fn test_finalize_setup_not_enough_deposit() {
-        let (_, mut ctr) = setup_contract(acc_owner(), 0, 0, None, None);
+        let (_, mut ctr) = setup_contract(acc_owner(), 0, 0, None, None, RATE, END);
         ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
         ctr.finalize_setup();
     }
 
     #[test]
     fn test_round_number() {
-        let (mut ctx, ctr) = setup_contract(acc_u1(), 0, 0, None, None);
+        let (mut ctx, ctr) = setup_contract(acc_u1(), 0, 0, None, None, RATE, END);
         assert_eq!(ctr.current_round(), 0);
 
         assert_eq!(round(-9), ROUND_NS);
@@ -1095,7 +1108,7 @@ mod tests {
         expected = "The attached deposit is less than the minimum storage balance (60000000000000000000000)"
     )]
     fn test_min_storage_deposit() {
-        let (mut ctx, mut ctr) = setup_contract(acc_u1(), 0, 0, None, None);
+        let (mut ctx, mut ctr) = setup_contract(acc_u1(), 0, 0, None, None, RATE, END);
         testing_env!(ctx.attached_deposit(STORAGE_COST / 4).build());
         ctr.storage_deposit(None, None);
     }
@@ -1108,7 +1121,9 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
 
         match ctr.storage_balance_of(user.clone()) {
@@ -1138,9 +1153,11 @@ mod tests {
             0, 
             0,
             Some(vec![acc_staking1()]),
-            Some(vec![E24])
+            Some(vec![E24]),
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         let user_1_stake_token = "some_token_id".to_string();
         let user_1_stake_contract = acc_staking1();
@@ -1168,9 +1185,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         assert!(
             ctr.status(user_1.clone()).is_none(),
@@ -1195,9 +1214,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         assert!(
             ctr.status(user_1.clone()).is_none(),
@@ -1228,9 +1249,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         assert!(
             ctr.status(user_1.clone()).is_none(),
@@ -1261,9 +1284,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         assert!(
             ctr.status(user_1.clone()).is_none(),
@@ -1420,9 +1445,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
         // register user1 account
         testing_env!(ctx.attached_deposit(STORAGE_COST).build());
         ctr.storage_deposit(None, None);
@@ -1478,13 +1505,15 @@ mod tests {
             0, 
             0,
             Some(vec![nft1.clone()]),
-            Some(vec![E24/10])
+            Some(vec![E24/10]),
+            RATE,
+            END
         );
         assert_eq!(
             ctr.total_stake, [0],
             "at the beginning there should be 0 total stake"
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         // register user1 account and stake before farming_start
         let user_1_stake = vec![vec!["some_token_id_1".to_string(), "some_token_id_1_1".to_string(), "some_token_id_1_2".to_string()]];
@@ -1617,9 +1646,11 @@ mod tests {
             0, 
             0,
             None,
-            None
+            None,
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         // -----------------------------------------------
         // register and stake by user1 and user2 - both will stake the same amounts
@@ -1655,7 +1686,7 @@ mod tests {
 
         // user1 unstake at round 5
         testing_env!(ctx.block_timestamp(round(4)).build());
-        unstake(&mut ctx, &mut ctr, &user_1, &nft1, user_1_stake.clone()[0].clone()[0].clone());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft1, Some(user_1_stake.clone()[0].clone()[0].clone()));
         let user_1_status = ctr.status(user_1.clone()).unwrap();
         let user_2_status = ctr.status(user_2.clone()).unwrap();
 
@@ -1691,9 +1722,9 @@ mod tests {
         );
 
         // unstake other tokens
-        unstake(&mut ctx, &mut ctr, &user_2, &nft1, user_2_stake.clone()[0].clone()[0].clone());
-        unstake(&mut ctx, &mut ctr, &user_1, &nft2, user_1_stake.clone()[1].clone()[0].clone());
-        unstake(&mut ctx, &mut ctr, &user_1, &nft2, user_1_stake.clone()[1].clone()[1].clone());
+        unstake(&mut ctx, &mut ctr, &user_2, &nft1, Some(user_2_stake.clone()[0].clone()[0].clone()));
+        unstake(&mut ctx, &mut ctr, &user_1, &nft2, Some(user_1_stake.clone()[1].clone()[0].clone()));
+        unstake(&mut ctx, &mut ctr, &user_1, &nft2, Some(user_1_stake.clone()[1].clone()[1].clone()));
         
         assert_eq!(ctr.total_stake[0], 0, "token1 stake was reduced");
         assert_eq!(ctr.total_stake[1], 2, "token2 is reduced");
@@ -1731,8 +1762,10 @@ mod tests {
             0,
             Some(vec![nft1.clone()]),
             Some(vec![E24]),
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         // ------------------------------------------------
         // register and stake by user1 and user2 - both will stake the same amounts,
@@ -1796,8 +1829,10 @@ mod tests {
             0,
             Some(vec![nft1.clone()]),
             Some(vec![E24/20]),
+            RATE,
+            END
         );
-        finalize(&mut ctr);
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
 
         let user_1_stake:Vec<Vec<String>> = vec![vec!["some_token".to_string(),"some_token_2".to_string()]];
 
@@ -1849,4 +1884,198 @@ mod tests {
         assert_eq!(ctr.total_stake[0], 0, "token1 stake was reduced");
         assert_eq!(ctr.total_cheddar_stake, 0, "cheddar stake reduces");
     }
+    #[test]
+    fn test_stake_longer() {
+        let user_1 = acc_u1();
+        let user_2 = acc_u2();
+        let user_3 = acc_u3();
+
+        let nft_1 = acc_staking1();
+        const E23RATE:u128 = RATE / 20;
+
+        // build new contract with 1 staked NFT and 2 farmed tokens
+        // for example farm tokens is CHEDDAR and another FARM_TOKEN
+        // which costs like `n` and `2n` and have rates for this in `setup_contract` function
+        let (mut ctx, mut ctr) = setup_contract(
+            acc_owner(),
+            0, 
+            0,
+            Some(vec![nft_1.clone()]),
+            Some(vec![E24]),
+            E23RATE,
+            20160
+        );
+
+        // finalize with setup deposits 
+        finalize(&mut ctr, vec![2016 * E24, 2016/2 * E24]);
+
+        // user 1 stake will be 2 tokens from nft_1 contract
+        let user_1_stake:Vec<Vec<String>> = vec![vec!["1_1".to_string(),"2_1".to_string()]];
+        // user 2 stake will be 1 token from nft_1 contract
+        let _user_2_stake:Vec<Vec<String>> = vec![vec!["1_2".to_string()]];
+        // user 3 stake will be 5 tokens from nft_1 contract
+        let user_3_stake:Vec<Vec<String>> = vec![vec!["1_3".to_string(),"2_3".to_string(),"3_3".to_string(),"4_3".to_string(), "5_3".to_string()]];
+
+        // all of them staked one token before farming start
+        // register storage => deposit 555 Cheddar => stake one token
+        register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft_1, "1_1".to_string(), -2);
+        register_user_and_stake(&mut ctx, &mut ctr, &user_2, &nft_1, "1_2".to_string(), -2);
+        register_user_and_stake(&mut ctx, &mut ctr, &user_3, &nft_1, "1_3".to_string(), -2);
+        
+        let mut user_1_status = ctr.status(user_1.clone()).unwrap();
+        let mut user_2_status = ctr.status(user_2.clone()).unwrap();
+        let mut user_3_status = ctr.status(user_3.clone()).unwrap();
+
+        assert_eq!(ctr.total_stake[0], 3,  "total staked tokens");
+        assert_eq!(ctr.total_cheddar_stake, 3 * CHEDDAR_RATE, "total staked cheddar on contract");
+        assert!(
+            user_1_status.farmed_units.0 + user_2_status.farmed_units.0 +user_3_status.farmed_units.0 == 0,
+            "zeroed units for all users before farming start"
+        );
+
+
+        // 20160 round ~ 2 weeks (20160 minutes)
+        let total_rounds = round_number(ctr.farming_start, ctr.farming_end, ctr.farming_end);
+        assert_eq!(total_rounds, 20160);
+
+        // move forward to 1 hour (60 rounds)
+        testing_env!(ctx.block_timestamp(round(60)).build());
+        // statuses
+        user_1_status = ctr.status(user_1.clone()).unwrap();
+        user_2_status = ctr.status(user_2.clone()).unwrap();
+        user_3_status = ctr.status(user_3.clone()).unwrap();
+
+        assert_eq!(ctr.total_stake[0], ctr.total_cheddar_stake / CHEDDAR_RATE, "staked tokens amount didn't change as like Cheddar stake");
+        assert!(
+            user_1_status.farmed_units.0 + user_2_status.farmed_units.0 + user_3_status.farmed_units.0 == 60 * E23RATE,
+            "for all users its one token and one hour farmed units (60minutes * rate)"
+        );
+        assert!(
+            user_1_status.farmed_tokens[0].0 + user_2_status.farmed_tokens[0].0 + user_3_status.farmed_tokens[0].0 == 60 * E23RATE,
+            "farmed token number one have 1/1 rates"
+        );
+        assert!(
+            user_1_status.farmed_tokens[1].0 + user_2_status.farmed_tokens[1].0 + user_3_status.farmed_tokens[1].0 == 60 * E23RATE / 2,
+            "farmed token number two have 1/2 rates from token one"
+        );
+        // ... and stake more for user_1
+        // deposit 555 Cheddar
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        // stake token
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "2_1".to_string());
+        // check user_1 stake and total_stake in Contract
+        user_1_status = ctr.status(user_1.clone()).unwrap();
+        assert_eq!(user_1_status.stake_tokens, user_1_stake, "user_1 now stake all his tokens (2)");
+        assert_eq!(ctr.total_stake[0], 4, "now one more token staked in contract");
+        assert_eq!(ctr.total_cheddar_stake, 4 * CHEDDAR_RATE, "now one more token staked in contract");
+
+        // move to next round
+        testing_env!(ctx.block_timestamp(round(61)).build());
+
+        user_1_status = ctr.status(user_1.clone()).unwrap();
+        user_2_status = ctr.status(user_2.clone()).unwrap();
+        user_3_status = ctr.status(user_3.clone()).unwrap();
+
+        // Now emission rate per round(minute) which equals to 1 * E24
+        // splits to 4 tokens which actually staked in Contract now
+        // so, per each staked token we got 1/4 * RATE = 0.25 RATE
+        // user 1 have 50% of this - 0.5 RATE per round
+        // user 2 and user 3 has 25% both - 0.25 RATE and 0.25 RATE
+        // user_1.farmed_units + user_2.farmed_units + user_3.farmed_units per round always equals to RATE
+        // Now we have 0.5 + 0.25 + 0.25
+        // lets check this out:
+        assert_eq!(user_1_status.farmed_units.0 - user_2_status.farmed_units.0, E23RATE / 4, "(50% staked = 2 tokens) user_1 farmed units per round minus (25% staked = 1 token) user_2 farmed units");
+        assert_eq!(user_1_status.farmed_units.0 - user_3_status.farmed_units.0, E23RATE / 4, "(50% staked = 2 tokens) user_1 farmed units per round minus (25% staked = 1 token) user_3 farmed units");
+        assert_eq!(
+            user_1_status.farmed_units.0 + user_2_status.farmed_units.0 + user_3_status.farmed_units.0 ,
+            61 * E23RATE, 
+            "sum of all units is RATE"
+        );
+
+        // move to 4 hours from farm was started
+        testing_env!(ctx.block_timestamp(round(240)).build());
+
+        // uncomment and see cheddar boost work[1]
+        // // add cheddy for user 3
+        // testing_env!(ctx
+        //     .predecessor_account_id(acc_nft_cheddy())
+        //     .signer_account_id(user_3.clone())
+        //     .build());
+        // ctr.nft_on_transfer(user_3.clone(), user_3.clone(), "1".into(), "cheddy".into());
+
+        // check total stake
+        assert_eq!(ctr.total_stake[0], 4);
+        assert_eq!(ctr.total_cheddar_stake, 4 * CHEDDAR_RATE);
+        // move to 25 hours from farm was started
+        testing_env!(ctx.block_timestamp(round(1500)).build());
+        user_1_status = ctr.status(user_1.clone()).unwrap();
+        user_2_status = ctr.status(user_2.clone()).unwrap();
+        user_3_status = ctr.status(user_3.clone()).unwrap();
+
+        // uncomment and see cheddar boost work[2]
+        //assert!(user_3_status.farmed_units.0 > user_2_status.farmed_units.0, "cheddy boost made user_3 more units when both staking same tokens amounts (1)");
+        
+        // stake rest 4 tokens from user_3
+        deposit_cheddar(&mut ctx, &mut ctr, &user_3);
+        stake(&mut ctx, &mut ctr, &user_3, &nft_1, "2_3".to_string());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_3);
+        stake(&mut ctx, &mut ctr, &user_3, &nft_1, "3_3".to_string());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_3);
+        stake(&mut ctx, &mut ctr, &user_3, &nft_1, "4_3".to_string());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_3);
+        stake(&mut ctx, &mut ctr, &user_3, &nft_1, "5_3".to_string());
+
+        //check stake
+        assert_eq!(ctr.total_stake[0], ctr.total_cheddar_stake / CHEDDAR_RATE, "+4 tokens and +4 * 555 Cheddar in Contract now");
+        //check totals
+        assert_eq!(user_3_stake, ctr.status(user_3.clone()).unwrap().stake_tokens, "user1 stake all 5 tokens");
+
+        // second after farm end
+        testing_env!(ctx.block_timestamp(round(20160)).build());
+        user_1_status = ctr.status(user_1.clone()).unwrap();
+        user_2_status = ctr.status(user_2.clone()).unwrap();
+        user_3_status = ctr.status(user_3.clone()).unwrap();
+
+        // **** view **** //
+        println!("units: {:?}\n", user_1_status.farmed_units.0 + user_2_status.farmed_units.0 +user_3_status.farmed_units.0);
+        println!("status_1 {:?}\n", user_1_status);
+        println!("status_2 {:?}\n", user_2_status);
+        println!("status_3 {:?}\n", user_3_status);
+
+        // unstake all - no token_id declared - go to self.close()
+        unstake(&mut ctx, &mut ctr, &user_3, &nft_1, None);
+        unstake(&mut ctx, &mut ctr, &user_2, &nft_1, None);
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_1, None);
+
+
+
+        //check
+        let total_emission = 20160 * E23RATE;
+        assert_eq!(ctr.total_harvested[0], total_emission, "all is harvested");
+        assert_eq!(ctr.total_cheddar_stake, 0,"all cheddar reverts when unstake");
+        assert_eq!(ctr.total_stake[0], 0,"all cheddar reverts when unstake");
+
+        //none statuses for all
+        assert!(ctr.status(user_1.clone()).is_none());
+        assert!(ctr.status(user_2.clone()).is_none());
+        assert!(ctr.status(user_3.clone()).is_none());
+
+
+
+
+        // // withdraw nft during round 3
+        // testing_env!(ctx
+        //     .predecessor_account_id(user_1.clone())
+        //     .block_timestamp(round(2) + 1000)
+        //     .attached_deposit(1)
+        //     .build());
+        // ctr.withdraw_boost_nft(user_1.clone());
+    }
 }
+
+/*
+1$ * 60minutes * 24hours * 365days / N tokens * token_price * 100 = 
+526% APR (10 tokens staked / token price = 1$)
+52.6% APR (100 tokens staked / token price = 1$)
+5.26% APR (1000 tokens staked / token price = 1$)
+*/
