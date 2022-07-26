@@ -117,10 +117,7 @@ impl FungibleTokenReceiver for Contract {
         msg: String,
     ) -> PromiseOrValue<U128> {
         let ft_token_id = env::predecessor_account_id();
-        assert!(
-            ft_token_id != near(),
-            "near must be sent using deposit_near()"
-        );
+
         assert!(amount.0 > 0, "deposited amount must be positive");
         // deposit rewards
         if msg == "setup reward deposit" {
