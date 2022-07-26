@@ -5,7 +5,7 @@ pub const TGAS: u64 = Gas::ONE_TERA.0;
 
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(10 * TGAS);
 pub const GAS_FOR_NFT_TRANSFER: Gas = Gas(20 * TGAS);
-pub const GAS_FOR_CALLBACK: Gas = Gas(20 * TGAS);
+pub const GAS_FOR_CALLBACK: Gas = Gas(5 * TGAS);
 
 /// Contract constants ( Stake & Farm )
 /// Cheddar contract
