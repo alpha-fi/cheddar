@@ -9,6 +9,9 @@ The P3-fixed farm allows to stake NFT tokens and farm FT. Constraints:
 The contract rewards algorithm is based on the ["Scalable Reward Distribution on the Ethereum
 Blockchain"](https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a40977462982470_scalable-reward-distribution-paper.pdf) algorithm.
 
+
+near dev-deploy -f --wasmFile /Users/macbookpro/Documents/GitHub/cheddar/target/wasm32-unknown-unknown/release/p3_farm_nft.wasm
+
 ## Parameters
 
 - Round duration: 1 minute
@@ -25,27 +28,31 @@ Let's define a common variables:
 
 ```sh
 # address of the farm
-FARM=
-CHEDDAR_RATE=
+FARM=cheddy-nft.cheddar.testnet
+
 # reward token address
 CHEDDAR=token-v3.cheddar.testnet
-REF=ref.fakes.testnet
+GUA=guacharo.testnet
 # the nft contract address(could be more then one) & token_ids we stake
-STAKEING_NFT_CONTRACT_ONE=
-TOKEN_ID_ONE=
+STAKEING_NFT_CONTRACT_ONE=dev-1648729969586-65831239603610
+CHEDDAR_RATE=5000000000000000000000000
+TOKEN_ID_ONE=86
 TOKEN_ID_TWO=
 # cheddy
 CHEDDY_NFT_CONTRACT=cheddy.testnet
 # owner
 OWNER=
 # user
-USER=me.testnet
+USER=rmlsnk.testnet
 ```
 
 1. Register in the farm:
 
    ```bash
-   near call $FARM storage_deposit '{}' --accountId $USER --deposit 0.06
+   #REGISTER FARM INTO FARM TOKENS
+   near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125 
+   #...AND AS USER INTO FARM
+   near call $FARM storage_deposit '{}' --accountId $USER --amount 0.06
    ```
 
 2. Stake tokens:
@@ -53,13 +60,13 @@ USER=me.testnet
    ```bash
    # Add required Cheddar to be able to stake NFT
    near call $CHEDDAR ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"'$CHEDDAR_RATE'", "msg": "cheddar stake"}' --accountId $USER --depositYocto 1 --gas=200000000000000
-      
+
    # stake
-   near call $STAKEING_NFT_CONTRACT_ONE nft_transfer_call '{"sender_id": "'$USER'", "previous_owner_id":"'$USER'", "token_id":"'$TOKEN_ID_ONE'", "msg": "to farm"}' --accountId $USER --depositYocto 1 --gas=200000000000000
+   near call $STAKEING_NFT_CONTRACT_ONE nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$TOKEN_ID_ONE'", "msg": "to farm"}' --accountId $USER --depositYocto 1 --gas=200000000000000
    ```
    - Add your cheddy boost!
    ```bash
-   near call $CHEDDY_NFT_CONTRACT nft_transfer_call '{"sender_id": "'$USER'", "previous_owner_id":"'$USER'", "token_id":"1", "msg": "cheddy"}' --accountId $USER --depositYocto 1 --gas=200000000000000
+   near call $CHEDDY_NFT_CONTRACT nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"1", "msg": "cheddy"}' --accountId $USER --depositYocto 1 --gas=200000000000000
    ```
 
 3. Enjoy farming, stake more, and observe your status:

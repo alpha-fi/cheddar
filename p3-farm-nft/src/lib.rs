@@ -509,6 +509,7 @@ impl Contract {
             self.farming_end,
             self.farming_end,
         ));
+        log!("rounds: {}", total_rounds);
         let out = self
             .farm_token_rates
             .iter()
@@ -1905,9 +1906,11 @@ mod tests {
             E23RATE,
             20160
         );
+        println!("{:#?}", ctr.finalize_setup_expected());
 
         // finalize with setup deposits 
         finalize(&mut ctr, vec![2016 * E24, 2016/2 * E24]);
+        println!("{:#?}", ctr.get_contract_params());
 
         // user 1 stake will be 2 tokens from nft_1 contract
         let user_1_stake:Vec<Vec<String>> = vec![vec!["1_1".to_string(),"2_1".to_string()]];
