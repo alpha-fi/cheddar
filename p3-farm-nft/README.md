@@ -35,15 +35,16 @@ CHEDDAR=token-v3.cheddar.testnet
 GUA=guacharo.testnet
 # the nft contract address(could be more then one) & token_ids we stake
 STAKEING_NFT_CONTRACT_ONE=dev-1648729969586-65831239603610
+# rate for required Cheddar deposit to have ability to stake 1 NFT
 CHEDDAR_RATE=5000000000000000000000000
 TOKEN_ID_ONE=86
+# boost
+BOOST_NFT_CONTRACT=boost_nft.testnet
 TOKEN_ID_TWO=
-# cheddy
-CHEDDY_NFT_CONTRACT=cheddy.testnet
 # owner
 OWNER=
 # user
-USER=rmlsnk.testnet
+USER=me.testnet
 ```
 
 1. Register in the farm:
@@ -51,6 +52,7 @@ USER=rmlsnk.testnet
    ```bash
    #REGISTER FARM INTO FARM TOKENS
    near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125 
+   near call $GUA storage_deposit '{}' --accountId $FARM --deposit 0.00125 
    #...AND AS USER INTO FARM
    near call $FARM storage_deposit '{}' --accountId $USER --amount 0.06
    ```
@@ -66,7 +68,7 @@ USER=rmlsnk.testnet
    ```
    - Add your cheddy boost!
    ```bash
-   near call $CHEDDY_NFT_CONTRACT nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"1", "msg": "cheddy"}' --accountId $USER --depositYocto 1 --gas=200000000000000
+   near call $BOOST_NFT_CONTRACT nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$TOKEN_ID_TWO'", "msg": "to boost"}' --accountId $USER --depositYocto 1 --gas=200000000000000
    ```
 
 3. Enjoy farming, stake more, and observe your status:
@@ -83,9 +85,9 @@ USER=rmlsnk.testnet
 
 5. Harvest all rewards and close the account (un-register) after the farm will close:
    ```bash
-   near call $FARM close '' --accountId $USER --depositYocto 1 --gas=200000000000000
+   near call $FARM close '' --accountId $USER --depositYocto 1 --gas=300000000000000
    ```
    Or u can unstake all (from declared nft contract) - it automatically close account if it was last staked contract
    ```bash
-   near call $FARM unstake '{"nft_contract_id":"'$STAKEING_NFT_CONTRACT_ONE'"}' --accountId $USER --depositYocto 1 --gas=200000000000000
+   near call $FARM unstake '{"nft_contract_id":"'$STAKEING_NFT_CONTRACT_ONE'"}' --accountId $USER --depositYocto 1 --gas=300000000000000
    ```
