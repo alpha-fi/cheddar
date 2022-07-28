@@ -2,7 +2,7 @@ use std::convert::TryInto;
 
 use near_contract_standards::non_fungible_token::TokenId;
 use near_sdk::json_types::U128;
-use near_sdk::{AccountId, Balance, env, require, PromiseResult};
+use near_sdk::{AccountId, Balance, env, require, PromiseResult, log};
 
 use crate::constants::*;
 use crate::vault::TokenIds;
@@ -98,6 +98,7 @@ pub fn big_e24() -> U256 {
     U256::from(E24)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn test_expected_cheddar() {
     let cheddar_rate = 555 * E24;
@@ -106,4 +107,17 @@ fn test_expected_cheddar() {
     assert_eq!(expected_cheddar_stake(0, cheddar_rate), 555 * E24);
     assert_eq!(expected_cheddar_stake(5, cheddar_rate), 555 * (5 + 1) * E24);
     assert_eq!(expected_cheddar_stake(30, cheddar_rate), 555 * (30 + 1) * E24);
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_extract_nft_contract_and_token_ids() {
+    assert_eq!(extract_contract_token_ids(&("nft_contract.near@token_id123".into())), ("nft_contract.near".parse().unwrap(), "token_id123".into()));
+    assert_eq!(extract_contract_token_ids(&("nft_contract.testnet@token_id123".into())), ("nft_contract.testnet".parse().unwrap(), "token_id123".into()));
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+#[should_panic(expected="unexpected length of vector!")]
+fn test_wrong_extract_nft_contract_and_token_ids() {
+    let result = extract_contract_token_ids(&("nft_contract.near@token_id123@1".into()));
+    log!("{:?}", result);
 }

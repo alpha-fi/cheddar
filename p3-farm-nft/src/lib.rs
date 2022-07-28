@@ -330,7 +330,7 @@ impl Contract {
     /// and all staked tokens back to the caller.
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
-    /// Max unstaking tokens per time limited (greedy gas).
+    /// Max unstaking tokens per time limited - 4 tokens (greedy gas).
     #[payable]
     pub fn close(&mut self) {
         self.assert_is_active();
