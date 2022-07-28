@@ -23,7 +23,7 @@ pub const ACC_OVERFLOW: Balance = 10_000_000; // 1e7
 
 /// NEAR Constants
 pub const NEAR_TOKEN:&str = "near";
-const MILLI_NEAR: Balance = 1000_000000_000000_000000; // 1e21 yoctoNear
+pub const MILLI_NEAR: Balance = 1000_000000_000000_000000; // 1e21 yoctoNear
 pub const STORAGE_COST: Balance = MILLI_NEAR * 60; // 0.06 NEAR
 /// E24 is 1 in yocto (1e24 yoctoNear)
 pub const E24: Balance = MILLI_NEAR * 1_000;
@@ -31,8 +31,9 @@ pub const ONE_YOCTO: Balance = 1;
 
 
 /// NFT constants
-pub(crate) type NftContractId = AccountId;
+pub (crate) type NftContractId = AccountId;
+pub (crate) type ContractNftTokenId = String;
 /// NFT Delimeter
-// pub const NFT_DELIMETER: &str = "@";
-/// Cheddy boost constant
+pub const NFT_DELIMETER: &str = "@";
+/// NFT boost constant
 pub const BASIS_P: Balance = 10_000;

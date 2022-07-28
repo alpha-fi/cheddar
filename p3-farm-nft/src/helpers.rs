@@ -34,7 +34,13 @@ pub fn find_acc_idx(acc: &AccountId, acc_v: &Vec<AccountId>) -> Option<usize> {
 pub fn find_token_idx(token: &TokenId, token_v: &Vec<TokenId>) -> Option<usize> {
     Some(token_v.iter().position(|x| x == token).expect("invalid token"))
 }
-
+pub fn extract_contract_token_ids(contract_and_token_id: &ContractNftTokenId) -> (NftContractId, TokenId) {
+    let contract_token_id_split: Vec<&str> = contract_and_token_id.split(NFT_DELIMETER).collect();
+    assert!(contract_token_id_split.len() == 2 as usize, "unexpected length of vector!");
+    let nft_contract_id:AccountId = contract_token_id_split[0].parse().unwrap();
+    let token_id:TokenId = contract_token_id_split[1].to_string();
+    (nft_contract_id, token_id)
+}
 pub fn min_stake(staked: &Vec<TokenIds>, stake_rates: &Vec<u128>) -> Balance {
     let mut min = std::u128::MAX;
     for (i, rate) in stake_rates.iter().enumerate() {

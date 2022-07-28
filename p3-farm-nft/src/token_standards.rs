@@ -10,7 +10,7 @@ use near_contract_standards::{
 /// Points to which transfer option is choosed for
 enum TransferInstruction {
     ToFarm,
-    ToCheddyBoost,
+    ToBoost,
     Unknown
 }
 
@@ -18,7 +18,7 @@ impl From<String> for TransferInstruction {
     fn from(msg: String) -> Self {
         match &msg[..] {
             "to farm"  => TransferInstruction::ToFarm,
-            "cheddy" => TransferInstruction::ToCheddyBoost,
+            "to boost" => TransferInstruction::ToBoost,
             _ => TransferInstruction::Unknown
         }
     }
@@ -30,7 +30,7 @@ impl From<String> for TransferInstruction {
 /// to accumulate bonuses.
 /// Message from transfer switch options:
 /// - NFT transfer to Farm
-/// - Cheddy NFT transfer for rewards boost
+/// - Boost NFT transfer for rewards to Boost
 #[near_bindgen]
 impl NonFungibleTokenReceiver for Contract {
     fn nft_on_transfer(
@@ -51,28 +51,14 @@ impl NonFungibleTokenReceiver for Contract {
         );
         
         match TransferInstruction::from(msg) {
-            // "cheddy" message for transfer P3 boost
-            TransferInstruction::ToCheddyBoost => {
-                if env::predecessor_account_id() != self.cheddar_nft {
-                    log!("Only Cheddy NFTs ({}) are supported", self.cheddar_nft);
+            // "to boost" message for transfer P3 boost
+            TransferInstruction::ToBoost => {
+                self.assert_is_active();
+                // stake boost
+                let stake_result = self.internal_boost_stake(&previous_owner_id, &nft_contract_id, token_id);
+                if !stake_result {
                     return PromiseOrValue::Value(true)
                 }
-                let v = self.vaults.get(&previous_owner_id);
-                if v.is_none() {
-                    log!("Account not registered. Register prior to depositing NFT");
-                    return PromiseOrValue::Value(true)
-                }
-                let mut v = v.unwrap();
-                if !v.cheddy.is_empty() {
-                    log!("Account already has Cheddy deposited. You can only deposit one cheddy");
-                    return PromiseOrValue::Value(true)
-                }
-                log!("Staking Cheddy NFT - you will obtain a special farming boost");
-                self.ping_all(&mut v);
-
-                v.cheddy = token_id;
-                self._recompute_stake(&mut v);
-                self.vaults.insert(&previous_owner_id, &v);
                 return PromiseOrValue::Value(false)
             },
             // "to farm" message for transfer NFT into P3 to stake

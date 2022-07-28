@@ -1,9 +1,9 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupMap;
+use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_sdk::json_types::U128;
 use near_sdk::{
-    assert_one_yocto, env, is_promise_success, log, near_bindgen, AccountId, Balance, BorshStorageKey, PanicOnDefault, Promise,
-    PromiseOrValue, PromiseResult,
+    assert_one_yocto, env, log, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
+    PromiseOrValue,
 };
 use near_contract_standards::non_fungible_token::TokenId;
 
@@ -61,10 +61,12 @@ pub struct Contract {
     /// unix timestamp (seconds) when the farming ends (first time with no farming).
     pub farming_end: u64,
 
-    /// NFT token used for boost
-    pub cheddar_nft: AccountId,
-    /// boost when staking cheddy in basis points
-    pub cheddar_nft_boost: u32,
+    /// NFT contract(s) used for boost
+    pub boost_nft_contracts: Vec<NftContractId>,
+    /// total number of received boost NFT tokens
+    total_boost: Vec<Balance>,
+    /// boost when staking NFT from `Contract.boost_nft_contracts` in basis points
+    pub nft_boost: u32,
 
     /// total number of harvested farm tokens
     pub total_harvested: Vec<Balance>,
@@ -107,15 +109,15 @@ impl Contract {
     #[init]
     pub fn new(
         owner_id: AccountId,
-        stake_nft_tokens: Vec<AccountId>,
+        stake_nft_tokens: Vec<NftContractId>,
         stake_rates: Vec<U128>,
         farm_unit_emission: U128,
         farm_tokens: Vec<AccountId>,
         farm_token_rates: Vec<U128>,
         farming_start: u64,
         farming_end: u64,
-        cheddar_nft: AccountId,
-        cheddar_nft_boost: u32,
+        boost_nft_contracts: Vec<NftContractId>,
+        nft_boost: u32,
         cheddar_rate: U128,
         cheddar: AccountId,
         fee_rate: u32,
@@ -130,6 +132,7 @@ impl Contract {
 
         let stake_len = stake_nft_tokens.len();
         let farm_len = farm_tokens.len();
+        let boost_len = boost_nft_contracts.len();
 
         let c = Self {
             is_active: true,
@@ -146,8 +149,9 @@ impl Contract {
             farm_deposits: vec![0; farm_len],
             farming_start,
             farming_end,
-            cheddar_nft: cheddar_nft.into(),
-            cheddar_nft_boost,
+            boost_nft_contracts,
+            total_boost: vec![0; boost_len],
+            nft_boost,
             total_harvested: vec![0; farm_len],
             reward_acc: 0,
             reward_acc_round: 0,
@@ -166,6 +170,7 @@ impl Contract {
     fn check_vectors(&self) {
         let fl = self.farm_tokens.len();
         let sl = self.stake_nft_tokens.len();
+        let bl = self.boost_nft_contracts.len();
         assert!(
             fl == self.farm_token_rates.len()
                 && fl == self.total_harvested.len()
@@ -178,6 +183,10 @@ impl Contract {
                 && sl == self.fee_collected.len(),
             "stake token vector length is not correct"
         );
+        assert!(
+            bl == self.total_boost.len(),
+            "boost contracts vector length is not correct"
+        )
     }
 
     // ************ //
@@ -197,9 +206,10 @@ impl Contract {
             is_active: self.is_active,
             farming_start: self.farming_start,
             farming_end: self.farming_end,
-            cheddar_nft: self.cheddar_nft.clone(),
+            boost_nft_contracts: self.boost_nft_contracts.clone(),
             total_staked: to_U128s(&self.total_stake),
             total_farmed: to_U128s(&self.total_harvested),
+            total_boost: to_U128s(&self.total_boost),
             fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
             cheddar_rate: U128(self.cheddar_rate),
@@ -224,7 +234,7 @@ impl Contract {
                     stake: v.min_stake.into(),
                     farmed_units: v.farmed.into(),
                     farmed_tokens: farmed,
-                    cheddy_nft: v.cheddy,
+                    boost_nfts: v.boost_nft,
                     timestamp: self.farming_start + r0 * ROUND,
                     total_cheddar_staked: v.total_cheddar_staked.into()
                 });
@@ -232,6 +242,7 @@ impl Contract {
             None => None,
         };
     }
+
     // ******************* //
     // transaction methods //
     // ******************* //
@@ -240,13 +251,11 @@ impl Contract {
     /// This function is considered safe and will work when contract is paused to allow user
     /// to withdraw his NFTs.
     #[payable]
-    pub fn withdraw_boost_nft(&mut self, receiver_id: AccountId) {
+    pub fn withdraw_boost_nft(&mut self) {
         assert_one_yocto();
         let user = env::predecessor_account_id();
         let mut vault = self.get_vault(&user);
-        // TODO - check why is it two account_id using
-        self._withdraw_cheddy_nft(&user, &mut vault, receiver_id.into());
-        self.vaults.insert(&user, &vault);
+        self._withdraw_boost_nft(&user, &mut vault);
     }
 
     /// Deposit native near during the setup phase for farming rewards.
@@ -310,7 +319,7 @@ impl Contract {
     /// Requires 1 yNEAR payment for wallet 2FA.
     /// modify
     #[payable]
-    pub fn unstake(&mut self, nft_contract_id: &AccountId, token_id: Option<TokenId>) -> Vec<String> {
+    pub fn unstake(&mut self, nft_contract_id: &NftContractId, token_id: Option<TokenId>) -> Vec<TokenId> {
         self.assert_is_active();
         assert_one_yocto();
         let user = env::predecessor_account_id();
@@ -321,6 +330,7 @@ impl Contract {
     /// and all staked tokens back to the caller.
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
+    /// Max unstaking tokens per time limited (greedy gas).
     #[payable]
     pub fn close(&mut self) {
         self.assert_is_active();
@@ -356,8 +366,8 @@ impl Contract {
         // withdraw farmed to user
         self._withdraw_crop(&account_id, vault.farmed);
 
-        if !vault.cheddy.is_empty() {
-            self._withdraw_cheddy_nft(&account_id, &mut vault, account_id.clone());
+        if !vault.boost_nft.is_empty() {
+            self._withdraw_boost_nft(&account_id, &mut vault);
         }
 
         if vault.total_cheddar_staked > 0 {
@@ -488,7 +498,7 @@ impl Contract {
         );
         let now = env::block_timestamp() / SECOND;
         assert!(
-            now < self.farming_start - ROUND, // TODO: change to 1 day?
+            now < self.farming_start - ROUND,
             "must be finalized at last before farm start"
         );
         for i in 0..self.farm_deposits.len() {
@@ -682,23 +692,24 @@ impl Contract {
 
             v.total_cheddar_staked += amount.0;
 
-            // TODO - remove this recompute?
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
         }
     }
 
     #[private]
-    pub fn withdraw_nft_callback(&mut self, user: AccountId, cheddy: TokenId) {
+    pub fn withdraw_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId, nft_contract_i: usize) {
         if promise_result_as_failed() {
             log!(
-                "transferring {} cheddy NFT failed. Recovering account state",
-                cheddy,
+                "transferring {} boost NFT failed. Recovering account state",
+                contract_and_token_id,
             );
-            // recover cheddy NFT
+            // recover boost NFT
             let mut v = self.recovered_vault(&user);
 
-            v.cheddy = cheddy;
+            self.total_boost[nft_contract_i] += 1;
+
+            v.boost_nft = contract_and_token_id;
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
         }
@@ -794,6 +805,14 @@ impl Contract {
             "can only be called by the owner"
         );
     }
+    /// returns `true` if boost `nft_contract_id` in `Contract.boost_nft_contracts`
+    fn is_boost_nft_whitelisted(&self, nft_contract_id: &NftContractId) -> bool {
+        self.boost_nft_contracts.contains(nft_contract_id)
+    }
+    #[allow(unused)]
+    pub (crate) fn assert_boost_nft(&self, nft_contract_id: &NftContractId) {
+        assert!(self.boost_nft_contracts.contains(nft_contract_id), "NFT contract wasn't whitelisted as stake boost");
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -812,40 +831,44 @@ mod tests {
     use super::*;
 
     fn acc_cheddar() -> AccountId {
-        "cheddar".to_string().try_into().unwrap()
+        "cheddar".parse().unwrap()
     }
 
     fn acc_farming2() -> AccountId {
-        "farming_token".to_string().try_into().unwrap()
+        "farming_token".parse().unwrap()
     }
 
     fn acc_staking1() -> AccountId {
-        "nft1".to_string().try_into().unwrap()
+        "nft1".parse().unwrap()
     }
 
     fn acc_staking2() -> AccountId {
-        "nft2".to_string().try_into().unwrap()
+        "nft2".parse().unwrap()
     }
 
-    fn acc_nft_cheddy() -> AccountId {
-        "nft_cheddy".to_string().try_into().unwrap()
+    fn acc_nft_boost() -> AccountId {
+        "nft_boost".parse().unwrap()
+    }
+
+    fn acc_nft_boost2() -> AccountId {
+        "nft_boost2".parse().unwrap()
     }
 
     fn acc_u1() -> AccountId {
-        "user1".to_string().try_into().unwrap()
+        "user1".parse().unwrap()
     }
 
     fn acc_u2() -> AccountId {
-        "user2".to_string().try_into().unwrap()
+        "user2".parse().unwrap()
     }
 
     #[allow(dead_code)]
     fn acc_u3() -> AccountId {
-        "user3".to_string().try_into().unwrap()
+        "user3".parse().unwrap()
     }
 
     fn acc_owner() -> AccountId {
-        "user_owner".to_string().try_into().unwrap()
+        "user_owner".parse().unwrap()
     }
 
 
@@ -881,8 +904,8 @@ mod tests {
             to_U128s(&vec![E24, E24 / 2]),  // farming rates
             round(0) / SECOND,                 // farming start
             round(total_rounds) / SECOND,        // farming end
-            acc_nft_cheddy(),                    // cheddy nft
-            BOOST,                         // cheddy boost
+            vec![acc_nft_boost(), acc_nft_boost2()],// boost nft
+            BOOST,                                 // boost rate
             U128(CHEDDAR_RATE),                // cheddar charge per 1 staked NFT
             acc_cheddar(),                      
             fee_rate,
@@ -1775,9 +1798,9 @@ mod tests {
         let user_1_stake:Vec<Vec<String>> = vec![vec!["some_token".to_string()]];
         register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft1, user_1_stake.clone()[0].clone()[0].clone(), -2);
 
-        testing_env!(ctx.predecessor_account_id(acc_nft_cheddy()).build());
+        testing_env!(ctx.predecessor_account_id(acc_nft_boost()).build());
 
-        ctr.nft_on_transfer(user_1.clone(), user_1.clone(), "1".into(), "cheddy".into());
+        ctr.nft_on_transfer(user_1.clone(), user_1.clone(), "1".into(), "to boost".into());
 
         register_user_and_stake(&mut ctx, &mut ctr, &user_2, &nft1, "some_token_2".into(), -2);
 
@@ -1794,6 +1817,12 @@ mod tests {
             user_2_status.farmed_units.0 < 2 / 2 * RATE,
             "user2 should farm less than the 'normal' rate"
         );
+        assert_eq!(
+            ctr.status(user_1.clone()).unwrap().boost_nfts,
+            "nft_boost@1".to_string(),
+            "incorrect boost contract_token_ids"
+        );
+        assert!(ctr.total_boost == vec![1u128, 0u128], "unexpected boost stake!"); 
 
         // withdraw nft during round 3
         testing_env!(ctx
@@ -1801,7 +1830,7 @@ mod tests {
             .block_timestamp(round(2) + 1000)
             .attached_deposit(1)
             .build());
-        ctr.withdraw_boost_nft(user_1.clone());
+        ctr.withdraw_boost_nft();
 
         // check at round 4 - user1 should farm at equal rate as user2
         testing_env!(ctx.block_timestamp(round(3)).build());
@@ -1818,6 +1847,11 @@ mod tests {
             RATE / 2,
             "user1 farming rate is equal to user2",
         );
+        assert!(
+            ctr.status(user_1.clone()).unwrap().boost_nfts.is_empty(),
+            "incorrect boost contract_token_ids"
+        );
+        assert!(ctr.total_boost == vec![0u128, 0u128], "unexpected boost stake!"); 
     }
     #[test]
     fn test_stake_by_token_id_unstake_all() {
@@ -1997,18 +2031,26 @@ mod tests {
 
         // move to 4 hours from farm was started
         testing_env!(ctx.block_timestamp(round(240)).build());
+        assert!(ctr.total_boost == vec![0u128, 0u128], "no boost stake!"); 
 
         // uncomment and see cheddar boost work[1]
-        // // add cheddy for user 3
-        // testing_env!(ctx
-        //     .predecessor_account_id(acc_nft_cheddy())
-        //     .signer_account_id(user_3.clone())
-        //     .build());
-        // ctr.nft_on_transfer(user_3.clone(), user_3.clone(), "1".into(), "cheddy".into());
-
+        // add boost NFT for user 3
+        testing_env!(ctx
+            .predecessor_account_id(acc_nft_boost())
+            .signer_account_id(user_3.clone())
+            .build());
+        ctr.nft_on_transfer(user_3.clone(), user_3.clone(), "1".into(), "to boost".into());
+        // add boost NFT2 for user 2
+        testing_env!(ctx
+            .predecessor_account_id(acc_nft_boost2())
+            .signer_account_id(user_1.clone())
+            .build());
+        ctr.nft_on_transfer(user_1.clone(), user_1.clone(), "1".into(), "to boost".into());
+  
         // check total stake
         assert_eq!(ctr.total_stake[0], 4);
         assert_eq!(ctr.total_cheddar_stake, 4 * CHEDDAR_RATE);
+        assert!(ctr.total_boost == vec![1u128, 1u128], "unexpected boost stake!"); 
         // move to 25 hours from farm was started
         testing_env!(ctx.block_timestamp(round(1500)).build());
         user_1_status = ctr.status(user_1.clone()).unwrap();
@@ -2016,8 +2058,19 @@ mod tests {
         user_3_status = ctr.status(user_3.clone()).unwrap();
 
         // uncomment and see cheddar boost work[2]
-        //assert!(user_3_status.farmed_units.0 > user_2_status.farmed_units.0, "cheddy boost made user_3 more units when both staking same tokens amounts (1)");
-        
+        assert!(user_3_status.farmed_units.0 > user_2_status.farmed_units.0, "NFT boost made user_3 more units when both staking same tokens amounts (1)");
+        assert_eq!(
+            ctr.status(user_3.clone()).unwrap().boost_nfts,
+            "nft_boost@1".to_string(),
+            "incorrect boost contract_token_ids"
+        );
+        assert_eq!(
+            ctr.status(user_1.clone()).unwrap().boost_nfts,
+            "nft_boost2@1".to_string(),
+            "incorrect boost contract_token_ids"
+        );
+        assert!(ctr.total_boost == vec![1u128, 1u128], "unexpected boost stake!"); 
+
         // stake rest 4 tokens from user_3
         deposit_cheddar(&mut ctx, &mut ctr, &user_3);
         stake(&mut ctx, &mut ctr, &user_3, &nft_1, "2_3".to_string());
@@ -2046,6 +2099,7 @@ mod tests {
         println!("status_3 {:?}\n", user_3_status);
 
         // unstake all - no token_id declared - go to self.close()
+        unstake(&mut ctx, &mut ctr, &user_3, &nft_1, Some("5_3".to_string()));
         unstake(&mut ctx, &mut ctr, &user_3, &nft_1, None);
         unstake(&mut ctx, &mut ctr, &user_2, &nft_1, None);
         unstake(&mut ctx, &mut ctr, &user_1, &nft_1, None);
@@ -2054,9 +2108,15 @@ mod tests {
 
         //check
         let total_emission = 20160 * E23RATE;
-        assert_eq!(ctr.total_harvested[0], total_emission, "all is harvested");
+        //emission accuracy with boost. F.e :
+        //total_harvested_expected(emission) = `2016000000000000000000000000`
+        //total_harvested_real = `2015999999320000000000000000`
+        let emission_accuracy:u128 = MILLI_NEAR; 
+        assert!(total_emission - ctr.total_harvested[0] < emission_accuracy, "all is harvested");
         assert_eq!(ctr.total_cheddar_stake, 0,"all cheddar reverts when unstake");
         assert_eq!(ctr.total_stake[0], 0,"all cheddar reverts when unstake");
+        assert!(ctr.total_boost == vec![0u128, 0u128], "all boost reverts when unstake!"); 
+
 
         //none statuses for all
         assert!(ctr.status(user_1.clone()).is_none());
@@ -2064,3 +2124,4 @@ mod tests {
         assert!(ctr.status(user_3.clone()).is_none());
     }
 }
+

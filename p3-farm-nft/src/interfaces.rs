@@ -1,25 +1,23 @@
-use near_sdk::json_types::U128;
+use crate::*;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{ext_contract, AccountId};
-
-use crate::vault::TokenIds;
 
 // #[ext_contract(ext_staking_pool)]
 pub trait StakingPool {
     // #[payable]
-    fn stake(&mut self, amount: U128);
+    // [internal] comes from NonFungibleTokenReceiver
+    // fn stake(&mut self, previous_owner_id: &AccountId, nft_contract_id: &NftContractId, token_id: Option<TokenId>) -> bool;
 
     // #[payable]
-    fn unstake(&mut self, amount: U128) -> U128;
+    fn unstake(&mut self, nft_contract_id: &NftContractId, token_id: Option<TokenId>) -> Vec<TokenId>;
 
-    fn withdraw_crop(&mut self, amount: U128);
+    fn withdraw_crop(&mut self);
 
     /****************/
     /* View methods */
     /****************/
 
-    /// Returns amount of staked NEAR and farmed CHEDDAR of given account & the unix-timestamp for the calculation.
-    fn status(&self, account_id: AccountId) -> (U128, U128, u64);
+    /// Returns info about registered Account
+    fn status(&self, account_id: AccountId) -> Option<Status>;
 }
 
 #[ext_contract(ext_self)]
@@ -27,22 +25,19 @@ pub trait ExtSelf {
     fn transfer_staked_callback(
         &mut self,
         user: AccountId,
-        token_i: usize,
-        amount: U128,
-        fee: U128,
+        nft_contract_i: usize,
+        token_id: TokenId,
+        //fee: U128
     );
     fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128);
-    fn withdraw_nft_callback(&mut self, user: AccountId, cheddy: String);
+    fn transfer_staked_cheddar_callback(&mut self, user: AccountId, amount: U128);
+    fn withdraw_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId);
     fn withdraw_fees_callback(&mut self, token_i: usize, amount: U128);
-    fn mint_callback(&mut self, user: AccountId, amount: U128);
-    fn mint_callback_finally(&mut self);
-    fn close_account(&mut self, user: AccountId);
 }
 
 #[ext_contract(ext_ft)]
 pub trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-    fn ft_mint(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
 #[ext_contract(ext_nft)]
@@ -67,7 +62,7 @@ pub trait NonFungibleToken {
 pub struct ContractParams {
     pub is_active: bool,
     pub owner_id: AccountId,
-    pub stake_tokens: Vec<AccountId>,
+    pub stake_tokens: Vec<NftContractId>,
     pub stake_rates: Vec<U128>,
     pub farm_unit_emission: U128,
     pub farm_tokens: Vec<AccountId>,
@@ -76,11 +71,14 @@ pub struct ContractParams {
     pub farming_start: u64,
     pub farming_end: u64,
     /// NFT token used for boost
-    pub cheddar_nft: AccountId,
+    pub boost_nft_contracts: Vec<NftContractId>,
+    /// total staked is total amount of NFT tokens staked to farm
     pub total_staked: Vec<U128>,
     /// total farmed is total amount of tokens farmed (not necessary minted - which would be
     /// total_harvested).
     pub total_farmed: Vec<U128>,
+    /// total boost is total amount of NFT tokens staked as a boost
+    pub total_boost: Vec<U128>,
     pub fee_rate: U128,
     /// Number of accounts currently registered.
     pub accounts_registered: u64,
@@ -101,8 +99,8 @@ pub struct Status {
     /// contract `farm_tokens`. Computed based on `farmed_units` and the contarct
     /// `farmed_token_rates.`
     pub farmed_tokens: Vec<U128>,
-    /// token ID of a staked Cheddy. Empty if user doesn't stake any Cheddy.
-    pub cheddy_nft: String,
+    /// token ID of a staked NFT boost. Empty if user doesn't stake any required boost NFT.
+    pub boost_nfts: TokenId,
     /// timestamp (in seconds) of the current round.
     pub timestamp: u64,
     /// Cheddar stake
