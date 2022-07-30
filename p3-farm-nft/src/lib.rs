@@ -326,7 +326,7 @@ impl Contract {
     /// Requires 1 yNEAR payment for wallet 2FA.
     /// modify
     #[payable]
-    pub fn unstake(&mut self, nft_contract_id: &NftContractId, token_id: Option<TokenId>) -> Vec<TokenId> {
+    pub fn unstake(&mut self, nft_contract_id: &NftContractId, token_id: TokenId) -> Vec<TokenId> {
         self.assert_is_active();
         assert_one_yocto();
         let user = env::predecessor_account_id();
@@ -342,6 +342,8 @@ impl Contract {
     pub fn close(&mut self) {
         self.assert_is_active();
         assert_one_yocto();
+
+        println!("on close account -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
 
         let account_id = env::predecessor_account_id();
         let mut vault = self.get_vault(&account_id);
@@ -363,6 +365,7 @@ impl Contract {
         for nft_contract_id in 0..self.total_stake.len() {
             let staked_tokens_ids = &vault.staked[nft_contract_id];
             for token_id in 0..staked_tokens_ids.clone().len() {
+                println!("on transfer staked token {} -  prepad_gas:{:?} used_gas:{:?}", token_id, env::prepaid_gas(), env::used_gas());
                 self.transfer_staked_nft_token(
                     account_id.clone(), 
                     nft_contract_id, 
@@ -372,14 +375,17 @@ impl Contract {
         }
         // withdraw farmed to user
         self._withdraw_crop(&account_id, vault.farmed);
+        println!("after withdraw crop -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
 
         if !vault.boost_nft.is_empty() {
             self._withdraw_boost_nft(&account_id, &mut vault);
+            println!("after withdraw boost -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         }
 
         if vault.total_cheddar_staked > 0 {
-            println!("cheddar on balance: {} ", vault.total_cheddar_staked);
+            println!("on transfer staked cheddar -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
             self.transfer_staked_cheddar(account_id.clone(), Some(vault.total_cheddar_staked));
+            println!("after transfer staked cheddar -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         }
 
         // NOTE: we don't return deposit because it will dramatically complicate logic
@@ -559,7 +565,7 @@ impl Contract {
 
         self.total_cheddar_stake -= transfered_amount.0;
         log!("@{} unstake Cheddar locked deposit ( {:?} )", user.clone(), transfered_amount);
-
+        println!("on transfer staked cheddar[2] -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         return ext_ft::ext(self.cheddar.clone())
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
@@ -687,6 +693,8 @@ impl Contract {
 
     #[private]
     pub fn transfer_staked_cheddar_callback(&mut self, user: AccountId, amount: U128) {
+        println!("on transfer staked cheddar callback -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
+
         if promise_result_as_failed() {
             log!(
                 "transferring Cheddar stake to @{} was failed. Recovering account state",
@@ -976,7 +984,7 @@ mod tests {
         ctr: &mut Contract,
         user: &AccountId,
         nft_token_contract: &AccountId,
-        token_id: Option<String>,
+        token_id: String,
     ) {
         testing_env!(ctx
             .attached_deposit(1)
@@ -1730,7 +1738,7 @@ mod tests {
 
         // user1 unstake at round 5
         testing_env!(ctx.block_timestamp(round(4)).build());
-        unstake(&mut ctx, &mut ctr, &user_1, &nft1, Some(user_1_stake.clone()[0].clone()[0].clone()));
+        unstake(&mut ctx, &mut ctr, &user_1, &nft1, user_1_stake.clone()[0].clone()[0].clone());
         let user_1_status = ctr.status(user_1.clone()).unwrap();
         let user_2_status = ctr.status(user_2.clone()).unwrap();
 
@@ -1766,9 +1774,9 @@ mod tests {
         );
 
         // unstake other tokens
-        unstake(&mut ctx, &mut ctr, &user_2, &nft1, Some(user_2_stake.clone()[0].clone()[0].clone()));
-        unstake(&mut ctx, &mut ctr, &user_1, &nft2, Some(user_1_stake.clone()[1].clone()[0].clone()));
-        unstake(&mut ctx, &mut ctr, &user_1, &nft2, Some(user_1_stake.clone()[1].clone()[1].clone()));
+        unstake(&mut ctx, &mut ctr, &user_2, &nft1, user_2_stake.clone()[0].clone()[0].clone());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft2, user_1_stake.clone()[1].clone()[0].clone());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft2, user_1_stake.clone()[1].clone()[1].clone());
         
         assert_eq!(ctr.total_stake[0], 0, "token1 stake was reduced");
         assert_eq!(ctr.total_stake[1], 2, "token2 is reduced");
@@ -1931,7 +1939,7 @@ mod tests {
             .attached_deposit(1)
             .predecessor_account_id(user_1.clone())
             .build());
-        ctr.unstake(&nft1, None);
+        close(&mut ctx, &mut ctr, &user_1);
         assert!(
             ctr.status(user_1.clone()).is_none(),
             "account closed"
@@ -1960,11 +1968,9 @@ mod tests {
             E23RATE,
             20160
         );
-        println!("{:#?}", ctr.finalize_setup_expected());
 
         // finalize with setup deposits 
         finalize(&mut ctr, vec![2016 * E24, 2016/2 * E24]);
-        println!("{:#?}", ctr.get_contract_params());
 
         // user 1 stake will be 2 tokens from nft_1 contract
         let user_1_stake:Vec<Vec<String>> = vec![vec!["1_1".to_string(),"2_1".to_string()]];
@@ -2119,10 +2125,10 @@ mod tests {
         println!("status_3 {:?}\n", user_3_status);
 
         // unstake all - no token_id declared - go to self.close()
-        unstake(&mut ctx, &mut ctr, &user_3, &nft_1, Some("5_3".to_string()));
-        unstake(&mut ctx, &mut ctr, &user_3, &nft_1, None);
-        unstake(&mut ctx, &mut ctr, &user_2, &nft_1, None);
-        unstake(&mut ctx, &mut ctr, &user_1, &nft_1, None);
+        unstake(&mut ctx, &mut ctr, &user_3, &nft_1, "5_3".to_string());
+        close(&mut ctx, &mut ctr, &user_3);
+        close(&mut ctx, &mut ctr, &user_2);
+        close(&mut ctx, &mut ctr, &user_1);
 
 
 
@@ -2264,6 +2270,157 @@ mod tests {
         );
         println!("{:?}", ctr.total_boost);
         assert!(ctr.total_boost == vec![0u128, 1u128, 1u128], "unexpected boost stake!"); 
+    }
+    #[test]
+    fn test_unstake_all() {
+        let user_1 = acc_u1();
+
+        let nft_1 = acc_staking1();
+        let nft_2 = acc_staking2();
+
+        const E23RATE:u128 = RATE / 20;
+
+        // build new contract with 1 staked NFT and 2 farmed tokens
+        // for example farm tokens is CHEDDAR and another FARM_TOKEN
+        // which costs like `n` and `2n` and have rates for this in `setup_contract` function
+        let (mut ctx, mut ctr) = setup_contract(
+            acc_owner(),
+            0, 
+            0,
+            Some(vec![nft_1.clone(), nft_2.clone()]),
+            Some(vec![E24, E24/2]),
+            E23RATE,
+            20160
+        );
+
+        // finalize with setup deposits 
+        finalize(&mut ctr, vec![2016 * E24, 2016/2 * E24]);
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft_1, "1".into(), -2);
+        assert!(ctr.total_cheddar_stake == 1 * CHEDDAR_RATE, "staked 1 NFT");
+
+        // stake 4 more
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "2".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "3".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "4".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "5".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "6".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "7".into());
+        // trying to unstake all from contract 1
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_1, "1".into());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_1, "3".into());
+        // status check
+        let user_1_status = ctr.status(user_1.clone()).unwrap();
+        assert!(user_1_status.stake_tokens[0].is_empty());
+        assert!(
+            user_1_status.stake_tokens[1] == Vec::<String>::from([
+                    "2".into(), 
+                    "4".into(), 
+                    "5".into(), 
+                    "6".into(), 
+                    "7".into()
+                ]), 
+            "nft_2 staked should keeped"
+        );
+        assert!(
+            user_1_status.total_cheddar_staked.0 == 5 * CHEDDAR_RATE,
+            "2 unstaked, now we have only 5 tokens from nft_2 contract"
+        );
+        assert_eq!(ctr.total_stake[0], 0, "no tokens for nft_1 contract");
+        assert_eq!(ctr.total_stake[1], 5, "5 tokens for nft_2 contract");
+
+        // stake contract 1 (nft_1) again
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "3".into());
+
+        // trying to unstake all (contract 2)
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_2, "2".into());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_2, "4".into());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_2, "5".into());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_2, "6".into());
+        unstake(&mut ctx, &mut ctr, &user_1, &nft_2, "7".into());
+
+        // status check
+        let user_1_status = ctr.status(user_1.clone()).unwrap();
+        println!("{:?}" , ctr.status(user_1.clone()));
+
+        assert!(user_1_status.stake_tokens[1].is_empty());
+        assert!(
+            user_1_status.stake_tokens[0] == Vec::<String>::from([
+                    "3".into(), 
+                ]), 
+            "nft_1 staked should keeped"
+        );
+        assert!(
+            user_1_status.total_cheddar_staked.0 == 1 * CHEDDAR_RATE,
+            "5 unstaked, now we have only 1 token from nft_2 contract"
+        );
+        assert_eq!(ctr.total_stake[0], 1, "1 token for nft_1 contract");
+        assert_eq!(ctr.total_stake[1], 0, "no tokens for nft_2 contract");
+        close(&mut ctx, &mut ctr, &user_1);
+        assert_eq!(ctr.total_stake[0], 0, "1 token for nft_1 contract");
+        assert_eq!(ctr.total_stake[1], 0, "no tokens for nft_2 contract");
+        assert!(ctr.status(user_1.clone()).is_none());
+    }
+    #[test] 
+    fn test_close_max() {
+        let user_1 = acc_u1();
+
+        let nft_1 = acc_staking1();
+        let nft_2 = acc_staking2();
+        const E23RATE:u128 = RATE / 20;
+
+        // build new contract with 1 staked NFT and 2 farmed tokens
+        // for example farm tokens is CHEDDAR and another FARM_TOKEN
+        // which costs like `n` and `2n` and have rates for this in `setup_contract` function
+        let (mut ctx, mut ctr) = setup_contract(
+            acc_owner(),
+            0, 
+            0,
+            Some(vec![nft_1.clone(), nft_2.clone()]),
+            Some(vec![E24, E24/2]),
+            E23RATE,
+            20160
+        );
+
+        // finalize with setup deposits 
+        finalize(&mut ctr, vec![2016 * E24, 2016/2 * E24]);
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft_1, "1".into(), -2);
+        assert!(ctr.total_cheddar_stake == 1 * CHEDDAR_RATE, "staked 1 NFT");
+
+        // stake 4 more
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "2".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "3".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "4".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "5".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "6".into());
+        deposit_cheddar(&mut ctx, &mut ctr, &user_1);
+        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "7".into());
+
+        assert!(ctr.total_cheddar_stake == 7 * CHEDDAR_RATE, "staked 8 NFT");
+        assert!(ctr.total_stake[0] == 4, "staked 4 NFT from nft_1");
+        assert!(ctr.total_stake[1] == 3, "staked 3 NFT from nft_2");
+        assert!(
+            ctr.status(user_1.clone()).unwrap().stake_tokens[0].len() + 
+            ctr.status(user_1.clone()).unwrap().stake_tokens[1].len()
+            == 7, "staked 7 NFT"
+        );
+
+        // trying to unstake all by close() func call
+        close(&mut ctx, &mut ctr, &user_1);        
+        assert!(ctr.status(user_1.clone()).is_none());
     }
 }
 

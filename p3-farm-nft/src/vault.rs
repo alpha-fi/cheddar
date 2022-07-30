@@ -160,12 +160,7 @@ impl Contract {
     ) -> bool {
         // find index for staking token into Contract.stake_tokens
         if let Some(nft_contract_i) = find_acc_idx(&nft_contract_id, &self.stake_nft_tokens) {
-            let v = self.vaults.get(&previous_owner_id);
-            if v.is_none() {
-                log!("Account not registered. Register prior to depositing NFT");
-                return false
-            }
-            let mut v = v.unwrap();
+            let mut v = self.get_vault(&previous_owner_id);
 
             // firstly check cheddar stake
             let cheddar_deposited = v.total_cheddar_staked;
@@ -207,13 +202,9 @@ impl Contract {
         token: TokenId
     ) -> bool {
         // find index for boost token into Contract.boost_nft_contracts
+        // Option to refund if `nft_contract_i` not in required for stake NFT contracts
         if let Some(nft_contract_i) = find_acc_idx(&nft_contract_id, &self.boost_nft_contracts) {
-            let v = self.vaults.get(&previous_owner_id);
-            if v.is_none() {
-                log!("Account not registered. Register prior to depositing NFT");
-                return false
-            }
-            let mut v = v.unwrap();
+            let mut v = self.get_vault(&previous_owner_id);
 
             if !v.boost_nft.is_empty() {
                 log!("Account already has boost NFT deposited. You can only deposit one");
@@ -224,13 +215,17 @@ impl Contract {
 
             let contract_token_id:ContractNftTokenId = format!("{}{}{}", nft_contract_id, NFT_DELIMETER, token);
 
-            v.boost_nft = contract_token_id;
+            v.boost_nft = contract_token_id.clone();
 
             // update total staked info about this token
             self.total_boost[nft_contract_i] += 1;
 
             self._recompute_stake(&mut v);
             self.vaults.insert(&previous_owner_id, &v);
+            log!(
+                "Added boost to user @{} with {}", 
+                previous_owner_id, contract_token_id.clone()
+            );
             return true
         } else {
             return false
@@ -243,38 +238,38 @@ impl Contract {
     pub(crate) fn internal_nft_unstake(
         &mut self,
         receiver_id: &AccountId,
-        nft_contract_id: &AccountId,
-        token: Option<TokenId>,
+        nft_contract_id: &NftContractId,
+        token_id: TokenId,
     ) -> Vec<String> {
+        // getting contract, token and user vault
         let nft_contract_i = find_acc_idx(nft_contract_id, &self.stake_nft_tokens).unwrap();
         let mut v = self.get_vault(receiver_id);
-        
-        if let Some(token_id) = token {
-            assert!(v.staked[nft_contract_i].contains(&token_id), "{}", ERR30_NOT_ENOUGH_STAKE);
-            self.ping_all(&mut v);
-            // remove token from vault
-            let token_i = find_token_idx(&token_id, &v.staked[nft_contract_i]).unwrap();
-            let removed_token_id = v.staked[nft_contract_i].remove(token_i);
-            let remaining_tokens = v.staked[nft_contract_i].clone();
-    
-            self._recompute_stake(&mut v);
+        let token_i = find_token_idx(&token_id, &v.staked[nft_contract_i]).unwrap();
 
-            // check if we are withdraw all staked tokens for all nft contracts
-            if all_zeros(&v.staked) {
-                self.close();
-                return vec![];
-            }
-            // after NFT transfer remove declared cheddar
-            v.total_cheddar_staked -= self.cheddar_rate;
-            self.vaults.insert(receiver_id, &v);
+        println!("on unstake -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
+        assert!(v.staked[nft_contract_i].contains(&token_id), "{}", ERR30_NOT_ENOUGH_STAKE);
 
-            self.transfer_staked_nft_token(receiver_id.clone(), nft_contract_i, removed_token_id);
-            self.transfer_staked_cheddar(receiver_id.clone(), None);
-            return remaining_tokens;
-        } else {
+        // check if we are withdraw last staked token - TODO
+        if v.get_number_of_staked_tokens() == 1 {
             self.close();
             return vec![];
         }
+
+        self.ping_all(&mut v);
+        // remove token from vault
+        let removed_token_id = v.staked[nft_contract_i].remove(token_i);
+        let remaining_tokens = v.staked[nft_contract_i].clone();
+
+        self._recompute_stake(&mut v);
+        
+        // after NFT transfer remove declared cheddar
+        v.total_cheddar_staked -= self.cheddar_rate;
+        self.vaults.insert(receiver_id, &v);
+
+        self.transfer_staked_nft_token(receiver_id.clone(), nft_contract_i, removed_token_id);
+        self.transfer_staked_cheddar(receiver_id.clone(), None);
+        println!("after unstake -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
+        return remaining_tokens;
     }
 
     pub(crate) fn _withdraw_boost_nft(
