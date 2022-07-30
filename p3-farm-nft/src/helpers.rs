@@ -41,6 +41,12 @@ pub fn extract_contract_token_ids(contract_and_token_id: &ContractNftTokenId) ->
     let token_id:TokenId = contract_token_id_split[1].to_string();
     (nft_contract_id, token_id)
 }
+pub fn get_boost_contract_id(contract_and_token_id: &ContractNftTokenId) -> NftContractId {
+    let contract_token_id_split: Vec<&str> = contract_and_token_id.split(NFT_DELIMETER).collect();
+    assert!(contract_token_id_split.len() == 2 as usize, "unexpected length of vector!");
+    let nft_contract_id:AccountId = contract_token_id_split[0].parse().unwrap();
+    nft_contract_id
+}
 pub fn min_stake(staked: &Vec<TokenIds>, stake_rates: &Vec<u128>) -> Balance {
     let mut min = std::u128::MAX;
     for (i, rate) in stake_rates.iter().enumerate() {

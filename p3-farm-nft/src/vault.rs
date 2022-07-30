@@ -1,5 +1,4 @@
 //! Vault is information per user about their balances in the exchange.
-use near_contract_standards::non_fungible_token::Token;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::serde::Serialize;
 
@@ -8,7 +7,7 @@ use near_sdk::{env, log, AccountId, Balance};
 use crate::*;
 
 pub (crate) type TokenIds = Vec<TokenId>;
-#[derive(Debug, BorshSerialize, BorshDeserialize, Serialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize)]
 #[cfg_attr(feature = "test", derive(Default, Debug, Clone))]
 pub struct Vault {
     /// Contract.reward_acc value when the last ping was called and rewards calculated
@@ -26,7 +25,8 @@ pub struct Vault {
     pub farmed_recovered: Vec<Balance>,
     /// NFTs deposited to get an extra boost. Only one NFT can be deposited to a
     /// single acocunt.
-    pub boost_nft: TokenId,
+    /// Storing like `nft_contract@token_id`
+    pub boost_nft: ContractNftTokenId,
     /// Staked Cheddar. Equals to `Contract.cheddar_rate` * total_staked_tokens.
     /// not depends on which NFT contract staked more or less tokens, rate used as a const
     pub total_cheddar_staked: Balance
@@ -124,7 +124,13 @@ impl Contract {
         let mut s = min_stake(&v.staked, &self.stake_rates);
 
         if !v.boost_nft.is_empty() {
-            s += s * u128::from(self.nft_boost) / BASIS_P;
+            let boost_contract:NftContractId = get_boost_contract_id(&v.boost_nft);
+            let nft_boost_rate = if boost_contract == self.cheddy {
+                self.cheddy_boost
+            } else {
+                self.nft_boost
+            };
+            s += s * u128::from(nft_boost_rate) / BASIS_P;
         }
 
         if s > v.min_stake {

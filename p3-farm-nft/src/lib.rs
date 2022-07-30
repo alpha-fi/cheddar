@@ -63,11 +63,14 @@ pub struct Contract {
 
     /// NFT contract(s) used for boost
     pub boost_nft_contracts: Vec<NftContractId>,
+    /// Cheddy NFT
+    pub cheddy: NftContractId,
     /// total number of received boost NFT tokens
     total_boost: Vec<Balance>,
-    /// boost when staking NFT from `Contract.boost_nft_contracts` in basis points
+    /// boost when staking NFT from `Contract.boost_nft_contracts` in basis points 
     pub nft_boost: u32,
-
+    /// boost when staking NFT from `Contract.boost_nft_contracts` in basis points for Cheddy NFT(s)
+    pub cheddy_boost: u32,
     /// total number of harvested farm tokens
     pub total_harvested: Vec<Balance>,
     /// rewards accumulator: running sum of farm_units per token (equals to the total
@@ -117,7 +120,9 @@ impl Contract {
         farming_start: u64,
         farming_end: u64,
         boost_nft_contracts: Vec<NftContractId>,
+        cheddy: NftContractId,
         nft_boost: u32,
+        cheddy_boost: u32,
         cheddar_rate: U128,
         cheddar: AccountId,
         fee_rate: u32,
@@ -150,8 +155,10 @@ impl Contract {
             farming_start,
             farming_end,
             boost_nft_contracts,
+            cheddy,
             total_boost: vec![0; boost_len],
             nft_boost,
+            cheddy_boost,
             total_harvested: vec![0; farm_len],
             reward_acc: 0,
             reward_acc_round: 0,
@@ -806,6 +813,7 @@ impl Contract {
         );
     }
     /// returns `true` if boost `nft_contract_id` in `Contract.boost_nft_contracts`
+    #[allow(unused)]
     fn is_boost_nft_whitelisted(&self, nft_contract_id: &NftContractId) -> bool {
         self.boost_nft_contracts.contains(nft_contract_id)
     }
@@ -846,6 +854,10 @@ mod tests {
         "nft2".parse().unwrap()
     }
 
+    fn acc_cheddy_nft() -> AccountId {
+        "cheddy_boost".parse().unwrap()
+    }
+
     fn acc_nft_boost() -> AccountId {
         "nft_boost".parse().unwrap()
     }
@@ -867,6 +879,11 @@ mod tests {
         "user3".parse().unwrap()
     }
 
+    #[allow(dead_code)]
+    fn acc_u4() -> AccountId {
+        "user4".parse().unwrap()
+    }
+
     fn acc_owner() -> AccountId {
         "user_owner".parse().unwrap()
     }
@@ -876,6 +893,7 @@ mod tests {
     const END: i64 = 10;
     const RATE: u128 = E24 * 2; // 2 farming_units / round (60s)
     const BOOST: u32 = 250;
+    const CHEDDY_BOOST: u32 = 300;
     const CHEDDAR_RATE: u128 = 555 * E24; // Cheddar amount required per 1 token stake
 
     fn round(r: i64) -> u64 {
@@ -904,9 +922,11 @@ mod tests {
             to_U128s(&vec![E24, E24 / 2]),  // farming rates
             round(0) / SECOND,                 // farming start
             round(total_rounds) / SECOND,        // farming end
-            vec![acc_nft_boost(), acc_nft_boost2()],// boost nft
-            BOOST,                                 // boost rate
-            U128(CHEDDAR_RATE),                // cheddar charge per 1 staked NFT
+            vec![acc_nft_boost(), acc_nft_boost2(), acc_cheddy_nft()], // boost nft
+            acc_cheddy_nft(),                            // cheddy nft
+            BOOST,                                    // boost rate
+            CHEDDY_BOOST,                                       // cheddy boost rate
+            U128(CHEDDAR_RATE),                   // cheddar charge per 1 staked NFT
             acc_cheddar(),                      
             fee_rate,
             accounts(1),  // treasury
@@ -1822,7 +1842,7 @@ mod tests {
             "nft_boost@1".to_string(),
             "incorrect boost contract_token_ids"
         );
-        assert!(ctr.total_boost == vec![1u128, 0u128], "unexpected boost stake!"); 
+        assert!(ctr.total_boost == vec![1u128, 0u128, 0u128], "unexpected boost stake!"); 
 
         // withdraw nft during round 3
         testing_env!(ctx
@@ -1851,7 +1871,7 @@ mod tests {
             ctr.status(user_1.clone()).unwrap().boost_nfts.is_empty(),
             "incorrect boost contract_token_ids"
         );
-        assert!(ctr.total_boost == vec![0u128, 0u128], "unexpected boost stake!"); 
+        assert!(ctr.total_boost == vec![0u128, 0u128, 0u128], "unexpected boost stake!"); 
     }
     #[test]
     fn test_stake_by_token_id_unstake_all() {
@@ -2031,7 +2051,7 @@ mod tests {
 
         // move to 4 hours from farm was started
         testing_env!(ctx.block_timestamp(round(240)).build());
-        assert!(ctr.total_boost == vec![0u128, 0u128], "no boost stake!"); 
+        assert!(ctr.total_boost == vec![0u128, 0u128, 0u128], "no boost stake!"); 
 
         // uncomment and see cheddar boost work[1]
         // add boost NFT for user 3
@@ -2050,7 +2070,7 @@ mod tests {
         // check total stake
         assert_eq!(ctr.total_stake[0], 4);
         assert_eq!(ctr.total_cheddar_stake, 4 * CHEDDAR_RATE);
-        assert!(ctr.total_boost == vec![1u128, 1u128], "unexpected boost stake!"); 
+        assert!(ctr.total_boost == vec![1u128, 1u128, 0u128], "unexpected boost stake!"); 
         // move to 25 hours from farm was started
         testing_env!(ctx.block_timestamp(round(1500)).build());
         user_1_status = ctr.status(user_1.clone()).unwrap();
@@ -2069,7 +2089,7 @@ mod tests {
             "nft_boost2@1".to_string(),
             "incorrect boost contract_token_ids"
         );
-        assert!(ctr.total_boost == vec![1u128, 1u128], "unexpected boost stake!"); 
+        assert!(ctr.total_boost == vec![1u128, 1u128, 0u128], "unexpected boost stake!"); 
 
         // stake rest 4 tokens from user_3
         deposit_cheddar(&mut ctx, &mut ctr, &user_3);
@@ -2115,13 +2135,135 @@ mod tests {
         assert!(total_emission - ctr.total_harvested[0] < emission_accuracy, "all is harvested");
         assert_eq!(ctr.total_cheddar_stake, 0,"all cheddar reverts when unstake");
         assert_eq!(ctr.total_stake[0], 0,"all cheddar reverts when unstake");
-        assert!(ctr.total_boost == vec![0u128, 0u128], "all boost reverts when unstake!"); 
+        assert!(ctr.total_boost == vec![0u128, 0u128, 0u128], "all boost reverts when unstake!"); 
 
 
         //none statuses for all
         assert!(ctr.status(user_1.clone()).is_none());
         assert!(ctr.status(user_2.clone()).is_none());
         assert!(ctr.status(user_3.clone()).is_none());
+    }
+
+    #[test]
+    fn test_different_nft_boosts() {
+        let user_1: AccountId = acc_u1();
+        let user_2: AccountId = acc_u2();
+        let user_3: AccountId = acc_u3();
+        let user_4: AccountId = acc_u4();
+        let nft1: AccountId = acc_staking1();
+        // whitelisted nfts for boost with less rates (250)
+        let less_rated_boost_1: AccountId = acc_nft_boost();
+        let less_rated_boost_2: AccountId = acc_nft_boost2();
+        // whitelisted cheddy for boost with more rates (300)
+        let cheddy_boost: AccountId = acc_cheddy_nft();
+
+        let (mut ctx, mut ctr) = setup_contract(
+            acc_owner(),
+            0, 
+            0,
+            Some(vec![nft1.clone()]),
+            Some(vec![E24]),
+            RATE,
+            END
+        );
+        finalize(&mut ctr, vec![20 * E24, 10 * E24]);
+
+        // ------------------------------------------------
+        // register and stake by user1, user2 and use 3 - both will stake the same amounts, but
+        // user 1 will have nft cheddy boost
+        // user 2 will have another nft boost (less_rated_boost_1)
+        // user 3 will have another nft boost (less_rated_boost_2)
+        // user 4 will have no boost
+
+        let user_1_stake:Vec<Vec<String>> = vec![vec!["some_token_1".to_string()]];
+        let user_2_stake:Vec<Vec<String>> = vec![vec!["some_token_2".to_string()]];
+        let user_3_stake:Vec<Vec<String>> = vec![vec!["some_token_3".to_string()]];
+        let user_4_stake:Vec<Vec<String>> = vec![vec!["some_token_4".to_string()]];
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft1, user_1_stake.clone()[0].clone()[0].clone(), -2);
+        testing_env!(ctx.predecessor_account_id(cheddy_boost).build());
+        ctr.nft_on_transfer(user_1.clone(), user_1.clone(), "1".into(), "to boost".into());
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_2, &nft1, "some_token_2".into(), -2);
+        testing_env!(ctx.predecessor_account_id(less_rated_boost_1).build());
+        ctr.nft_on_transfer(user_2.clone(), user_2.clone(), "1".into(), "to boost".into());
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_3, &nft1, "some_token_3".into(), -2);
+        testing_env!(ctx.predecessor_account_id(less_rated_boost_2).build());
+        ctr.nft_on_transfer(user_3.clone(), user_3.clone(), "1".into(), "to boost".into());
+
+        register_user_and_stake(&mut ctx, &mut ctr, &user_4, &nft1, "some_token_4".into(), -2);
+
+        // check at round 3
+        testing_env!(ctx.block_timestamp(round(2)).build());
+        let user_1_status = ctr.status(user_1.clone()).unwrap();
+        let user_2_status = ctr.status(user_2.clone()).unwrap();
+        let user_3_status = ctr.status(user_3.clone()).unwrap();
+        let user_4_status = ctr.status(user_4.clone()).unwrap();
+
+
+        assert!(
+            user_1_status.farmed_units.0 > (2 / 4) * RATE,
+            "user1 should farm more than the 'normal' rate"
+        );
+        assert!(
+            user_2_status.farmed_units.0 > (2 / 4) * RATE,
+            "user2 should farm more than the 'normal' rate"
+        );
+        assert!(
+            user_3_status.farmed_units.0 > (2 / 4) * RATE,
+            "user3 should farm more than the 'normal' rate"
+        );
+        assert!(
+            user_4_status.farmed_units.0 < (2 * RATE) / 4, // 2/4 RATE too
+            "user4 should farm less than the 'normal' rate"
+        );
+        assert_eq!(
+            user_1_status.boost_nfts,
+            "cheddy_boost@1".to_string(),
+            "incorrect boost contract_token_ids"
+        );
+        assert_ne!(
+            user_2_status.boost_nfts,
+            user_3_status.boost_nfts,
+            "incorrect boost contract_token_ids"
+        );
+        assert!(user_2_status.farmed_units.0 == user_3_status.farmed_units.0, "same collection boost nfts - same boost");
+        assert!(user_1_status.farmed_units.0 > user_2_status.farmed_units.0, "cheddy boost provides more rewards than other boost nfts");
+        
+        assert!(ctr.total_boost == vec![1u128, 1u128, 1u128], "unexpected boost stake!"); 
+
+        // withdraw nft from user_2 during round 3
+        testing_env!(ctx
+            .predecessor_account_id(user_2.clone())
+            .block_timestamp(round(2) + 1000)
+            .attached_deposit(1)
+            .build());
+        ctr.withdraw_boost_nft();
+
+        // check at round 4 - user2 should farm at equal rate as user4
+        testing_env!(ctx.block_timestamp(round(3)).build());
+        let _user_1_status_r4 = ctr.status(user_1.clone()).unwrap();
+        let user_2_status_r4 = ctr.status(user_2.clone()).unwrap();
+        let user_3_status_r4 = ctr.status(user_3.clone()).unwrap();
+        let user_4_status_r4 = ctr.status(user_4.clone()).unwrap();
+
+        assert_eq!(
+            user_2_status_r4.farmed_units.0 - user_2_status.farmed_units.0,
+            user_4_status_r4.farmed_units.0 - user_4_status.farmed_units.0,
+            "user2 farming rate is equal to user4"
+        );
+        assert!(
+            user_3_status_r4.farmed_units.0 > user_2_status_r4.farmed_units.0,
+            "user3 farming rate more then user2 has now"
+        );
+
+        assert!(
+            ctr.status(user_2.clone()).unwrap().boost_nfts.is_empty(),
+            "incorrect boost contract_token_ids"
+        );
+        println!("{:?}", ctr.total_boost);
+        assert!(ctr.total_boost == vec![0u128, 1u128, 1u128], "unexpected boost stake!"); 
     }
 }
 
