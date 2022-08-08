@@ -31,6 +31,7 @@ impl From<String> for TransferInstruction {
 /// Message from transfer switch options:
 /// - NFT transfer to Farm
 /// - Boost NFT transfer for rewards to Boost
+#[allow(unused_variables)]
 #[near_bindgen]
 impl NonFungibleTokenReceiver for Contract {
     fn nft_on_transfer(

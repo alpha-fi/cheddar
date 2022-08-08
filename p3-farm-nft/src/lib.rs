@@ -1,5 +1,5 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, UnorderedSet};
+use near_sdk::collections::LookupMap;
 use near_sdk::json_types::U128;
 use near_sdk::{
     assert_one_yocto, env, log, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
@@ -343,8 +343,6 @@ impl Contract {
         self.assert_is_active();
         assert_one_yocto();
 
-        println!("on close account -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
-
         let account_id = env::predecessor_account_id();
         let mut vault = self.get_vault(&account_id);
         self.ping_all(&mut vault);
@@ -353,11 +351,13 @@ impl Contract {
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
         if vault.is_empty() {
+            self.accounts_registered -= 1;
             self.vaults.remove(&account_id);
             Promise::new(account_id.clone()).transfer(STORAGE_COST);
             return;
         }
 
+        // TODO - checked sub?
         let units = min_stake(&vault.staked, &self.stake_rates);
         self.staked_nft_units -= units;
 
@@ -365,7 +365,6 @@ impl Contract {
         for nft_contract_id in 0..self.total_stake.len() {
             let staked_tokens_ids = &vault.staked[nft_contract_id];
             for token_id in 0..staked_tokens_ids.clone().len() {
-                println!("on transfer staked token {} -  prepad_gas:{:?} used_gas:{:?}", token_id, env::prepaid_gas(), env::used_gas());
                 self.transfer_staked_nft_token(
                     account_id.clone(), 
                     nft_contract_id, 
@@ -375,21 +374,18 @@ impl Contract {
         }
         // withdraw farmed to user
         self._withdraw_crop(&account_id, vault.farmed);
-        println!("after withdraw crop -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
 
         if !vault.boost_nft.is_empty() {
             self._withdraw_boost_nft(&account_id, &mut vault);
-            println!("after withdraw boost -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         }
 
         if vault.total_cheddar_staked > 0 {
-            println!("on transfer staked cheddar -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
             self.transfer_staked_cheddar(account_id.clone(), Some(vault.total_cheddar_staked));
-            println!("after transfer staked cheddar -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         }
 
         // NOTE: we don't return deposit because it will dramatically complicate logic
         // in case we need to recover an account.
+        self.accounts_registered -= 1;
         self.vaults.remove(&account_id);
     }
 
@@ -565,7 +561,6 @@ impl Contract {
 
         self.total_cheddar_stake -= transfered_amount.0;
         log!("@{} unstake Cheddar locked deposit ( {:?} )", user.clone(), transfered_amount);
-        println!("on transfer staked cheddar[2] -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         return ext_ft::ext(self.cheddar.clone())
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
@@ -693,7 +688,6 @@ impl Contract {
 
     #[private]
     pub fn transfer_staked_cheddar_callback(&mut self, user: AccountId, amount: U128) {
-        println!("on transfer staked cheddar callback -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
 
         if promise_result_as_failed() {
             log!(
@@ -906,7 +900,7 @@ mod tests {
 
     fn round(r: i64) -> u64 {
         let r: u64 = (10 + r).try_into().unwrap();
-        println!("current round:{} {} ", r, r * ROUND_NS);
+        dbg!("current round:{} {} ", r, r * ROUND_NS);
         return r * ROUND_NS;
     }
     /// deposit_dec = size of deposit in e24 to set for the next transacton
@@ -1218,12 +1212,17 @@ mod tests {
             &mut ctr, 
             &user_1, 
             &user_1_stake_contract, 
-            user_1_stake_token,
+            user_1_stake_token.clone(),
             2 // round
         );
         
         let user_1_status = ctr.status(user_1.clone()).unwrap();
         assert_eq!(user_1_status.stake.0, E24, "u1 should have staked units!");
+        unstake(&mut ctx, &mut ctr, &user_1, &user_1_stake_contract,user_1_stake_token.clone());
+        let status = ctr.status(user_1.clone());
+
+        assert!(status.is_none());
+        dbg!("{:?}", ctr.get_contract_params());
     }
 
     #[test]
@@ -1917,7 +1916,7 @@ mod tests {
             user_1_stake,
             "user stake didn't change"
         );
-        println!("{:?} ", user_1_status);
+        dbg!("{:?} ", user_1_status.clone());
         assert_eq!(
             user_1_status.farmed_units.0,
             4 * RATE,
@@ -2086,12 +2085,12 @@ mod tests {
         // uncomment and see cheddar boost work[2]
         assert!(user_3_status.farmed_units.0 > user_2_status.farmed_units.0, "NFT boost made user_3 more units when both staking same tokens amounts (1)");
         assert_eq!(
-            ctr.status(user_3.clone()).unwrap().boost_nfts,
+            user_3_status.boost_nfts,
             "nft_boost@1".to_string(),
             "incorrect boost contract_token_ids"
         );
         assert_eq!(
-            ctr.status(user_1.clone()).unwrap().boost_nfts,
+            user_1_status.boost_nfts,
             "nft_boost2@1".to_string(),
             "incorrect boost contract_token_ids"
         );
@@ -2119,10 +2118,10 @@ mod tests {
         user_3_status = ctr.status(user_3.clone()).unwrap();
 
         // **** view **** //
-        println!("units: {:?}\n", user_1_status.farmed_units.0 + user_2_status.farmed_units.0 +user_3_status.farmed_units.0);
-        println!("status_1 {:?}\n", user_1_status);
-        println!("status_2 {:?}\n", user_2_status);
-        println!("status_3 {:?}\n", user_3_status);
+        dbg!("units: {:?}\n", user_1_status.farmed_units.0 + user_2_status.farmed_units.0 +user_3_status.farmed_units.0);
+        dbg!("status_1 {:?}\n", user_1_status);
+        dbg!("status_2 {:?}\n", user_2_status);
+        dbg!("status_3 {:?}\n", user_3_status);
 
         // unstake all - no token_id declared - go to self.close()
         unstake(&mut ctx, &mut ctr, &user_3, &nft_1, "5_3".to_string());
@@ -2182,9 +2181,9 @@ mod tests {
         // user 4 will have no boost
 
         let user_1_stake:Vec<Vec<String>> = vec![vec!["some_token_1".to_string()]];
-        let user_2_stake:Vec<Vec<String>> = vec![vec!["some_token_2".to_string()]];
-        let user_3_stake:Vec<Vec<String>> = vec![vec!["some_token_3".to_string()]];
-        let user_4_stake:Vec<Vec<String>> = vec![vec!["some_token_4".to_string()]];
+        let _user_2_stake:Vec<Vec<String>> = vec![vec!["some_token_2".to_string()]];
+        let _user_3_stake:Vec<Vec<String>> = vec![vec!["some_token_3".to_string()]];
+        let _user_4_stake:Vec<Vec<String>> = vec![vec!["some_token_4".to_string()]];
 
         register_user_and_stake(&mut ctx, &mut ctr, &user_1, &nft1, user_1_stake.clone()[0].clone()[0].clone(), -2);
         testing_env!(ctx.predecessor_account_id(cheddy_boost).build());
@@ -2268,7 +2267,7 @@ mod tests {
             ctr.status(user_2.clone()).unwrap().boost_nfts.is_empty(),
             "incorrect boost contract_token_ids"
         );
-        println!("{:?}", ctr.total_boost);
+        dbg!("{:?}", ctr.total_boost.clone());
         assert!(ctr.total_boost == vec![0u128, 1u128, 1u128], "unexpected boost stake!"); 
     }
     #[test]
@@ -2348,7 +2347,7 @@ mod tests {
 
         // status check
         let user_1_status = ctr.status(user_1.clone()).unwrap();
-        println!("{:?}" , ctr.status(user_1.clone()));
+        dbg!("{:?}" , ctr.status(user_1.clone()));
 
         assert!(user_1_status.stake_tokens[1].is_empty());
         assert!(
@@ -2399,26 +2398,26 @@ mod tests {
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
         stake(&mut ctx, &mut ctr, &user_1, &nft_1, "2".into());
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
-        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "3".into());
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "3".into());
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
         stake(&mut ctx, &mut ctr, &user_1, &nft_1, "4".into());
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
-        stake(&mut ctx, &mut ctr, &user_1, &nft_2, "5".into());
+        stake(&mut ctx, &mut ctr, &user_1, &nft_1, "5".into());
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
         stake(&mut ctx, &mut ctr, &user_1, &nft_1, "6".into());
         deposit_cheddar(&mut ctx, &mut ctr, &user_1);
         stake(&mut ctx, &mut ctr, &user_1, &nft_2, "7".into());
 
         assert!(ctr.total_cheddar_stake == 7 * CHEDDAR_RATE, "staked 8 NFT");
-        assert!(ctr.total_stake[0] == 4, "staked 4 NFT from nft_1");
-        assert!(ctr.total_stake[1] == 3, "staked 3 NFT from nft_2");
+        assert!(ctr.total_stake[0] == 6, "staked 4 NFT from nft_1");
+        assert!(ctr.total_stake[1] == 1, "staked 3 NFT from nft_2");
         assert!(
             ctr.status(user_1.clone()).unwrap().stake_tokens[0].len() + 
             ctr.status(user_1.clone()).unwrap().stake_tokens[1].len()
             == 7, "staked 7 NFT"
         );
 
-        // trying to unstake all by close() func call
+        // trying to unstake all by close() func call (MAX=7)
         close(&mut ctx, &mut ctr, &user_1);        
         assert!(ctr.status(user_1.clone()).is_none());
     }

@@ -246,11 +246,11 @@ impl Contract {
         let mut v = self.get_vault(receiver_id);
         let token_i = find_token_idx(&token_id, &v.staked[nft_contract_i]).unwrap();
 
-        println!("on unstake -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         assert!(v.staked[nft_contract_i].contains(&token_id), "{}", ERR30_NOT_ENOUGH_STAKE);
 
-        // check if we are withdraw last staked token - TODO
+        // check if we are withdraw last staked token
         if v.get_number_of_staked_tokens() == 1 {
+            log!("unstaked last staked token - closing account");
             self.close();
             return vec![];
         }
@@ -268,7 +268,6 @@ impl Contract {
 
         self.transfer_staked_nft_token(receiver_id.clone(), nft_contract_i, removed_token_id);
         self.transfer_staked_cheddar(receiver_id.clone(), None);
-        println!("after unstake -  prepad_gas:{:?} used_gas:{:?}", env::prepaid_gas(), env::used_gas());
         return remaining_tokens;
     }
 

@@ -58,7 +58,8 @@ pub trait NonFungibleToken {
         memo: Option<String>,
     );
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub struct ContractParams {
     pub is_active: bool,
     pub owner_id: AccountId,
@@ -87,7 +88,8 @@ pub struct ContractParams {
     pub cheddar: AccountId
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, Clone))]
 pub struct Status {
     pub stake_tokens: Vec<TokenIds>,
     /// the min stake

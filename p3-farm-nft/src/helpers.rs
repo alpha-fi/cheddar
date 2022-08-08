@@ -2,7 +2,7 @@ use std::convert::TryInto;
 
 use near_contract_standards::non_fungible_token::TokenId;
 use near_sdk::json_types::U128;
-use near_sdk::{AccountId, Balance, env, require, PromiseResult, log};
+use near_sdk::{AccountId, Balance, env, require, PromiseResult};
 
 use crate::constants::*;
 use crate::vault::TokenIds;
@@ -125,5 +125,5 @@ fn test_extract_nft_contract_and_token_ids() {
 #[should_panic(expected="unexpected length of vector!")]
 fn test_wrong_extract_nft_contract_and_token_ids() {
     let result = extract_contract_token_ids(&("nft_contract.near@token_id123@1".into()));
-    log!("{:?}", result);
+    dbg!("{:?}", result);
 }
