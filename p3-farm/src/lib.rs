@@ -323,12 +323,12 @@ impl Contract {
         let mut v = self.get_vault(&a);
         self.ping_all(&mut v);
         log!("Closing {} account, farmed: {:?}", &a, v.farmed);
+        self.accounts_registered -= 1;
+        self.vaults.remove(&a);
 
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
         if v.is_empty() {
-            self.accounts_registered -= 1;
-            self.vaults.remove(&a);
             Promise::new(a.clone()).transfer(STORAGE_COST);
             return;
         }
@@ -345,7 +345,6 @@ impl Contract {
 
         // NOTE: we don't return deposit because it will dramatically complicate logic
         // in case we need to recover an account.
-        self.vaults.remove(&a);
     }
 
     /// Withdraws all farmed tokens to the user. It doesn't close the account.
@@ -683,17 +682,12 @@ impl Contract {
         };
         if is_staked {
             v.staked[token_i] += amount;
-            let s = min_stake(&v.staked, &self.stake_rates);
-            let diff = s - v.min_stake;
-            if diff > 0 {
-                self.staked_units += diff;
-            }
+            self._recompute_stake(&mut v);
         } else {
             self.total_harvested[token_i] -= amount;
             v.farmed_recovered[token_i] += amount;
         }
 
-        self._recompute_stake(&mut v);
         self.vaults.insert(user, &v);
     }
 
@@ -1391,7 +1385,9 @@ mod tests {
 
         // close accounts
         testing_env!(ctx.block_timestamp(round(7)).build());
+        assert_eq!(ctr.accounts_registered, 1);
         close(&mut ctx, &mut ctr, &u2);
+        assert_eq!(ctr.accounts_registered, 0);
         assert_eq!(ctr.total_stake[0], 0, "token1");
         assert_eq!(ctr.total_stake[1], 0, "token2");
         assert!(
