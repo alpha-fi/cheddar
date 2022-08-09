@@ -107,6 +107,7 @@ impl Contract {
                 / self.staked_units
     }
 
+    /// Recomputes stake aggreagator. Must be called after ping_s!
     pub(crate) fn _recompute_stake(&mut self, v: &mut Vault) {
         let mut s = min_stake(&v.staked, &self.stake_rates);
         if !v.cheddy.is_empty() {
@@ -114,13 +115,12 @@ impl Contract {
         }
         if s > v.min_stake {
             let diff = s - v.min_stake;
-            self.staked_units += diff; // must be called after ping_s
-            v.min_stake = s;
+            self.staked_units += diff;
         } else if s < v.min_stake {
             let diff = v.min_stake - s;
-            self.staked_units -= diff; // must be called after ping_s
-            v.min_stake = s;
+            self.staked_units -= diff;
         }
+        v.min_stake = s;
     }
 
     /// Returns new stake units
