@@ -1,0 +1,18 @@
+[package]
+name = "p4-pool"
+version = "0.1.0"
+authors = ["Guacharo"]
+edition = "2018"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+uint = { version = "0.9.0", default-features = false }
+near-sdk = "4.0.0"
+near-contract-standards = "4.0.0"
+
+[dev-dependencies]
+# near-primitives = { git = "https://github.com/nearprotocol/nearcore.git" }
+# near-sdk-sim = { git = "https://github.com/near/near-sdk-rs.git", version="v3.1.0" }

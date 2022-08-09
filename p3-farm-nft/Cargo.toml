@@ -1,7 +1,7 @@
 [package]
-name = "cheddar-coin"
-version = "1.0.0"
-authors = []
+name = "p3-farm-nft"
+version = "0.1.0"
+authors = ["Guacharo"]
 edition = "2018"
 publish = false
 
@@ -10,8 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde = { version = "*", features = ["derive"] }
-serde_json = "*"
+serde_json = { version = "1.0" }
 uint = { version = "0.9.0", default-features = false }
-near-sys = "0.1.0"
-near-contract-standards = "4.0.0"
 near-sdk = "4.0.0"
+near-contract-standards = "4.0.0"

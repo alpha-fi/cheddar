@@ -1,0 +1,5 @@
++ using a list for staked and farmed tokens (we can stake multiple token  and farm multiple tokens)
++ names have changed -> see the Contract struc
++ status returns a struct -> Status struct
+
++ unstake takes a new argument - which token to unstake

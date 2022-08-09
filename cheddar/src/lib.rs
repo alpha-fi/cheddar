@@ -1,5 +1,4 @@
 /// Cheddar Token
-///
 /// Functionality:
 /// - No account storage complexity - Since NEAR slashed storage price by 10x
 /// it does not make sense to add that friction (storage backup per user).
@@ -11,24 +10,15 @@
 ///
 use near_contract_standards::fungible_token::{
     core::FungibleTokenCore,
-    metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC},
-    resolver::FungibleTokenResolver,
+    metadata::{FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC}, 
 };
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupMap};
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::U128;
 use near_sdk::{
-    assert_one_yocto, env, ext_contract, log, near_bindgen, AccountId, Balance, Gas,
+    assert_one_yocto, env, log, ext_contract, near_bindgen, AccountId, Balance,
     PanicOnDefault, PromiseOrValue,
 };
-
-const TGAS: Gas = 1_000_000_000_000;
-const GAS_FOR_RESOLVE_TRANSFER: Gas = 5 * TGAS;
-const GAS_FOR_FT_TRANSFER_CALL: Gas = 25 * TGAS + GAS_FOR_RESOLVE_TRANSFER;
-const NO_DEPOSIT: Balance = 0;
-
-near_sdk::setup_alloc!();
-
 mod internal;
 mod migrations;
 mod storage;
@@ -165,9 +155,14 @@ impl Contract {
         self.metadata.set(&m);
     }
 
-    pub fn set_owner(&mut self, owner_id: ValidAccountId) {
+    pub fn set_owner(&mut self, owner_id: AccountId) {
         self.assert_owner();
-        self.owner_id = owner_id.as_ref().clone();
+        assert!(
+            env::is_valid_account_id(owner_id.as_bytes()),
+            "Account @{} is invalid!",
+            owner_id.clone()
+        );
+        self.owner_id = owner_id.clone();
     }
 
     /// Get the owner of this account.
@@ -240,17 +235,17 @@ impl Contract {
 #[near_bindgen]
 impl FungibleTokenCore for Contract {
     #[payable]
-    fn ft_transfer(&mut self, receiver_id: ValidAccountId, amount: U128, memo: Option<String>) {
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>) {
         assert_one_yocto();
         let sender_id = env::predecessor_account_id();
         let amount: Balance = amount.into();
-        self.internal_transfer(&sender_id, receiver_id.as_ref(), amount, memo);
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
     }
 
     #[payable]
     fn ft_transfer_call(
         &mut self,
-        receiver_id: ValidAccountId,
+        receiver_id: AccountId,
         amount: U128,
         memo: Option<String>,
         msg: String,
@@ -258,25 +253,35 @@ impl FungibleTokenCore for Contract {
         assert_one_yocto();
         let sender_id = env::predecessor_account_id();
         let amount: Balance = amount.into();
-        self.internal_transfer(&sender_id, receiver_id.as_ref(), amount, memo);
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
         // Initiating receiver's call and the callback
-        // ext_fungible_token_receiver::ft_on_transfer(
+        // ext_ft calls like this was deprecated in v4.0.0 near-sdk-rs
+        /*
         ext_ft_receiver::ft_on_transfer(
             sender_id.clone(),
             amount.into(),
             msg,
-            receiver_id.as_ref(),
+            receiver_id.clone(),
             NO_DEPOSIT,
             env::prepaid_gas() - GAS_FOR_FT_TRANSFER_CALL,
         )
         .then(ext_self::ft_resolve_transfer(
             sender_id,
-            receiver_id.into(),
+            receiver_id,
             amount.into(),
-            &env::current_account_id(),
+            env::current_account_id(),
             NO_DEPOSIT,
             GAS_FOR_RESOLVE_TRANSFER,
         ))
+        */
+        ext_ft_receiver::ext(receiver_id.clone())
+        .with_static_gas(env::prepaid_gas() - GAS_FOR_FT_TRANSFER_CALL)
+        .ft_on_transfer(sender_id.clone(), amount.into(), msg)
+        .then(
+            ext_ft_resolver::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                .ft_resolve_transfer(sender_id, receiver_id, amount.into()),
+        )
         .into()
     }
 
@@ -284,42 +289,30 @@ impl FungibleTokenCore for Contract {
         self.total_supply.into()
     }
 
-    fn ft_balance_of(&self, account_id: ValidAccountId) -> U128 {
-        self._balance_of(account_id.as_ref()).into()
+    fn ft_balance_of(&self, account_id: AccountId) -> U128 {
+        self._balance_of(&account_id).into()
     }
 }
-
-#[near_bindgen]
-impl FungibleTokenResolver for Contract {
-    /// Returns the amount of burned tokens in a corner case when the sender
-    /// has deleted (unregistered) their account while the `ft_transfer_call` was still in flight.
-    /// Returns (Used token amount, Burned token amount)
-    #[private]
-    fn ft_resolve_transfer(
-        &mut self,
-        sender_id: ValidAccountId,
-        receiver_id: ValidAccountId,
-        amount: U128,
-    ) -> U128 {
-        let sender_id: AccountId = sender_id.into();
-        let (used_amount, burned_amount) =
-            self.ft_resolve_transfer_adjust(&sender_id, receiver_id, amount);
-        if burned_amount > 0 {
-            log!("{} tokens burned", burned_amount);
-        }
-        return used_amount.into();
-    }
-}
-
-#[near_bindgen]
-impl FungibleTokenMetadataProvider for Contract {
-    fn ft_metadata(&self) -> FungibleTokenMetadata {
-        self.internal_get_ft_metadata()
-    }
-}
-
 #[ext_contract(ext_ft_receiver)]
 pub trait FungibleTokenReceiver {
+    /// Called by fungible token contract after `ft_transfer_call` was initiated by
+    /// `sender_id` of the given `amount` with the transfer message given in `msg` field.
+    /// The `amount` of tokens were already transferred to this contract account and ready to be used.
+    ///
+    /// The method must return the amount of tokens that are *not* used/accepted by this contract from the transferred
+    /// amount. Examples:
+    /// - The transferred amount was `500`, the contract completely takes it and must return `0`.
+    /// - The transferred amount was `500`, but this transfer call only needs `450` for the action passed in the `msg`
+    ///   field, then the method must return `50`.
+    /// - The transferred amount was `500`, but the action in `msg` field has expired and the transfer must be
+    ///   cancelled. The method must return `500` or panic.
+    ///
+    /// Arguments:
+    /// - `sender_id` - the account ID that initiated the transfer.
+    /// - `amount` - the amount of tokens that were transferred to this account in a decimal string representation.
+    /// - `msg` - a string message that was passed with this transfer call.
+    ///
+    /// Returns the amount of unused tokens that should be returned to sender, in a decimal string representation.
     fn ft_on_transfer(
         &mut self,
         sender_id: AccountId,
@@ -328,14 +321,24 @@ pub trait FungibleTokenReceiver {
     ) -> PromiseOrValue<U128>;
 }
 
-#[ext_contract(ext_self)]
-trait FungibleTokenResolver {
+#[ext_contract(ext_ft_resolver)]
+pub trait FungibleTokenResolver {
+    /// Returns the amount of burned tokens in a corner case when the sender
+    /// has deleted (unregistered) their account while the `ft_transfer_call` was still in flight.
+    /// Returns (Used token amount, Burned token amount)
     fn ft_resolve_transfer(
         &mut self,
         sender_id: AccountId,
         receiver_id: AccountId,
         amount: U128,
     ) -> U128;
+}
+
+#[near_bindgen]
+impl FungibleTokenMetadataProvider for Contract {
+    fn ft_metadata(&self) -> FungibleTokenMetadata {
+        self.internal_get_ft_metadata()
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -347,7 +350,7 @@ mod tests {
 
     const OWNER_SUPPLY: Balance = 1_000_000_000_000_000_000_000_000_000_000;
 
-    fn get_context(predecessor_account_id: ValidAccountId) -> VMContextBuilder {
+    fn get_context(predecessor_account_id: AccountId) -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
         builder
             .current_account_id(accounts(0))
@@ -366,7 +369,7 @@ mod tests {
             .attached_deposit(1)
             .predecessor_account_id(accounts(1))
             .build());
-        contract.mint(&accounts(1).to_string(), OWNER_SUPPLY.into());
+        contract.mint(&accounts(1), OWNER_SUPPLY.into());
 
         testing_env!(context.is_view(true).build());
         assert_eq!(contract.ft_total_supply().0, OWNER_SUPPLY);
@@ -391,7 +394,7 @@ mod tests {
             .attached_deposit(1)
             .predecessor_account_id(accounts(2))
             .build());
-        contract.mint(&accounts(2).to_string(), OWNER_SUPPLY.into());
+        contract.mint(&accounts(2), OWNER_SUPPLY.into());
 
         testing_env!(context
             .storage_usage(env::storage_usage())

@@ -1,0 +1,8 @@
+1. Rewards thinking - 1 token staked actually, so we need less RATE then with FT tokens
+2. Add functions:
+	 pay-and-stake with cheddar payments for stake or unstake
+	 unstake-all (done, with Option<TokenId> = None)
+
+Simplification: 
+* Rewards every near block (approx 1 second), use multiplication
+
