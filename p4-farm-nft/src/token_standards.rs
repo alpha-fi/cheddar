@@ -52,7 +52,7 @@ impl NonFungibleTokenReceiver for Contract {
         );
         
         match TransferInstruction::from(msg) {
-            // "to boost" message for transfer P3 boost
+            // "to boost" message for transfer P4 boost
             TransferInstruction::ToBoost => {
                 self.assert_is_active();
                 // stake boost
@@ -62,7 +62,7 @@ impl NonFungibleTokenReceiver for Contract {
                 }
                 return PromiseOrValue::Value(false)
             },
-            // "to farm" message for transfer NFT into P3 to stake
+            // "to farm" message for transfer NFT into P4 to stake
             TransferInstruction::ToFarm => {
                 self.assert_is_active();
                 // stake
