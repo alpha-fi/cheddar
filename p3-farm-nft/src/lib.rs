@@ -763,13 +763,7 @@ impl Contract {
 
         // NFT contract id recovered
         if is_staked {
-            v.staked[contract_i].push(token_id.unwrap());
-            // let s = min_stake(&v.staked, &self.stake_rates);
-            // let diff = s - v.min_stake;
-            // if diff > 0 {
-            //     self.staked_nft_units += diff;
-            // }
-        
+            v.staked[contract_i].push(token_id.unwrap());        
         // FT contract id recovered
         } else {
             let amount = amount.unwrap();
