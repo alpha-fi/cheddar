@@ -80,7 +80,7 @@ USER_ID=me.testnet
    - Add your (cheddy) boost! (you can have only one boost per time)
    ```bash
    near call $BOOST_NFT_CONTRACT nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$TOKEN_ID_BOOST'", "msg": "to boost"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
-   near call $FARM withdraw_nft_boost '' --accountId $USER_ID
+   near call $FARM withdraw_boost_nft '' --accountId $USER_ID
    near call $CHEDDY nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$CHEDDY_TOKEN_ID'", "msg": "to boost"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
    ```
 
