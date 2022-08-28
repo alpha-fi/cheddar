@@ -1,39 +1,21 @@
-use std::convert::TryInto;
+use crate::*;
 
-use near_contract_standards::non_fungible_token::TokenId;
-use near_sdk::json_types::U128;
-use near_sdk::{AccountId, Balance, env, require, PromiseResult};
+/// NFT constants
+pub (crate) type NftContractId = AccountId;
+pub (crate) type ContractNftTokenId = String;
+/// NFT Delimeter
+pub const NFT_DELIMETER: &str = "@";
 
-use crate::constants::*;
-use crate::vault::TokenIds;
-
-use uint::construct_uint;
-construct_uint! {
-    /// 256-bit unsigned integer.
-    pub struct U256(4);
-}
-/// Computing farmed tokens amount from
-/// number of `staked_nft_tokens` and `stake_rate` for each of them
-pub fn farmed_tokens(units: u128, rate: Balance) -> Balance {
-    (U256::from(units) * U256::from(rate) / big_e24()).as_u128()
-}
 /// Computing required amount of staked Cheddar from
 /// number of `staked_nft_tokens` and `Contract.cheddar_rate`
 pub fn expected_cheddar_stake(units: usize, cheddar_rate: Balance) -> Balance{
     (U256::from(units + 1) * U256::from(cheddar_rate)).as_u128()
 }
 
-#[allow(non_snake_case)]
-pub fn to_U128s(v: &Vec<Balance>) -> Vec<U128> {
-    v.iter().map(|x| U128::from(*x)).collect()
+pub fn find_token_idx(token: &TokenId, token_v: &Vec<TokenId>) -> usize {
+    token_v.iter().position(|x| x == token).expect("invalid token")
 }
 
-pub fn find_acc_idx(acc: &AccountId, acc_v: &Vec<AccountId>) -> Option<usize> {
-    Some(acc_v.iter().position(|x| x == acc).expect("invalid nft contract"))
-}
-pub fn find_token_idx(token: &TokenId, token_v: &Vec<TokenId>) -> Option<usize> {
-    Some(token_v.iter().position(|x| x == token).expect("invalid token"))
-}
 pub fn extract_contract_token_ids(contract_and_token_id: &ContractNftTokenId) -> (NftContractId, TokenId) {
     let contract_token_id_split: Vec<&str> = contract_and_token_id.split(NFT_DELIMETER).collect();
     assert!(contract_token_id_split.len() == 2 as usize, "unexpected length of vector!");
@@ -41,12 +23,7 @@ pub fn extract_contract_token_ids(contract_and_token_id: &ContractNftTokenId) ->
     let token_id:TokenId = contract_token_id_split[1].to_string();
     (nft_contract_id, token_id)
 }
-pub fn get_boost_contract_id(contract_and_token_id: &ContractNftTokenId) -> NftContractId {
-    let contract_token_id_split: Vec<&str> = contract_and_token_id.split(NFT_DELIMETER).collect();
-    assert!(contract_token_id_split.len() == 2 as usize, "unexpected length of vector!");
-    let nft_contract_id:AccountId = contract_token_id_split[0].parse().unwrap();
-    nft_contract_id
-}
+
 pub fn min_stake(staked: &Vec<TokenIds>, stake_rates: &Vec<u128>) -> Balance {
     let mut min = std::u128::MAX;
     for (i, rate) in stake_rates.iter().enumerate() {
@@ -76,32 +53,6 @@ pub fn promise_result_as_failed() -> bool {
         PromiseResult::Failed => true,
         _ => false,
     }
-}
-
-/// computes round number based on timestamp in seconds
-pub fn round_number(start: u64, end: u64, mut now: u64) -> u64 {
-    if now < start {
-        return 0;
-    }
-    // we start rounds from 0
-    let mut adjust = 0;
-    if now >= end {
-        now = end;
-        // if at the end of farming we don't start a new round then we need to force a new round
-        if now % ROUND != 0 {
-            adjust = 1
-        };
-    }
-    let r: u64 = ((now - start) / ROUND).try_into().unwrap();
-    r + adjust
-}
-
-pub fn near() -> AccountId {
-    NEAR_TOKEN.parse::<AccountId>().unwrap()
-}
-
-pub fn big_e24() -> U256 {
-    U256::from(E24)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

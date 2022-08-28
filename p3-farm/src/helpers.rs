@@ -11,6 +11,10 @@ construct_uint! {
     struct U256(4);
 }
 
+pub fn near() -> AccountId {
+    NEAR_TOKEN.parse::<AccountId>().unwrap()
+}
+
 pub fn farmed_tokens(units: Balance, rate: Balance) -> Balance {
     let e24_big: U256 = U256::from(E24);
     (U256::from(units) * U256::from(rate) / e24_big).as_u128()

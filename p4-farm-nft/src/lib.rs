@@ -1,23 +1,28 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+#[allow(unused_imports)]
+use near_sdk::serde::{Serialize, Deserialize};
+
 use near_sdk::collections::LookupMap;
 use near_sdk::json_types::U128;
 use near_sdk::{
-    assert_one_yocto, env, log, ext_contract, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
-    PromiseOrValue,
+    assert_one_yocto, env, log, require, ext_contract, near_bindgen, 
+    AccountId, Balance, PanicOnDefault, 
+    Promise, PromiseOrValue, PromiseResult, ONE_YOCTO
 };
 use near_contract_standards::non_fungible_token::TokenId;
 
-pub mod constants;
-pub mod errors;
-pub mod interfaces;
+use p3_lib::constants::*;
+use p3_lib::helpers::*;
+use p3_lib::errors::*;
+use p3_lib::interfaces::*;
+
 pub mod helpers;
-pub mod vault;
-pub mod token_standards;
 pub mod storage_management;
+pub mod token_standards;
+pub mod vault;
 
 use crate::helpers::*;
-use crate::interfaces::*;
-use crate::{constants::*, errors::*, vault::*};
+use crate::vault::*;
 
 /// Implementing the "Scalable Reward Distribution on the Ethereum Blockchain"
 /// algorithm:
@@ -201,8 +206,8 @@ impl Contract {
     // ************ //
 
     /// Returns amount of staked NEAR and farmed CHEDDAR of given account.
-    pub fn get_contract_params(&self) -> ContractParams {
-        ContractParams {
+    pub fn get_contract_params(&self) -> P4ContractParams {
+        P4ContractParams {
             owner_id: self.owner_id.clone(),
             stake_tokens: self.stake_nft_tokens.clone(),
             stake_rates: to_U128s(&self.stake_rates),
@@ -224,7 +229,7 @@ impl Contract {
         }
     }
 
-    pub fn status(&self, account_id: AccountId) -> Option<Status> {
+    pub fn status(&self, account_id: AccountId) -> Option<P4Status> {
         return match self.vaults.get(&account_id) {
             Some(mut v) => {
                 let r = self.current_round();
@@ -236,7 +241,7 @@ impl Contract {
                     .iter()
                     .map(|rate| U128::from(farmed_tokens(v.farmed, *rate)))
                     .collect();
-                return Some(Status {
+                return Some(P4Status {
                     stake_tokens: v.staked,
                     stake: v.min_stake.into(),
                     farmed_units: v.farmed.into(),
@@ -269,7 +274,7 @@ impl Contract {
     /// Panics when the deposit was already done or the setup is completed.
     #[payable]
     pub fn setup_deposit_near(&mut self) {
-        self._setup_deposit(&NEAR_TOKEN.parse().unwrap(), env::attached_deposit())
+        self._setup_deposit(&near(), env::attached_deposit())
     }
     /// FT Receiver `setup deposit` scenario
     /// Panics on failed `unwrap()` if FT not set in `Contract.farm_tokens`
@@ -278,7 +283,7 @@ impl Contract {
             !self.setup_finalized,
             "setup deposits must be done when contract setup is not finalized"
         );
-        let token_i = find_acc_idx(token, &self.farm_tokens).unwrap();
+        let token_i = find_acc_idx(token, &self.farm_tokens);
         let total_rounds = round_number(self.farming_start, self.farming_end, self.farming_end);
         let expected = farmed_tokens(
             u128::from(total_rounds) * self.farm_unit_emission,
@@ -427,7 +432,7 @@ impl Contract {
         self.assert_is_active();
         let a = env::predecessor_account_id();
         let mut v = self.get_vault(&a);
-        let token_i = find_acc_idx(token, &self.farm_tokens).unwrap();
+        let token_i = find_acc_idx(token, &self.farm_tokens);
         let amount = v.farmed_recovered[token_i];
         assert!(amount > 0, "user {} balance is zero", token);
         v.farmed_recovered[token_i] = 0;
@@ -2130,7 +2135,7 @@ mod tests {
         //emission accuracy with boost. F.e :
         //total_harvested_expected(emission) = `2016000000000000000000000000`
         //total_harvested_real = `2015999999320000000000000000`
-        let emission_accuracy:u128 = MILLI_NEAR; 
+        let emission_accuracy:u128 = E24 / 1000; 
         assert!(total_emission - ctr.total_harvested[0] < emission_accuracy, "all is harvested");
         assert_eq!(ctr.total_cheddar_stake, 0,"all cheddar reverts when unstake");
         assert_eq!(ctr.total_stake[0], 0,"all cheddar reverts when unstake");
