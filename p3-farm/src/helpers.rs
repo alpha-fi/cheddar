@@ -6,6 +6,7 @@ use near_sdk::{AccountId, Balance};
 use crate::constants::*;
 
 use uint::construct_uint;
+
 construct_uint! {
     /// 256-bit unsigned integer.
     struct U256(4);

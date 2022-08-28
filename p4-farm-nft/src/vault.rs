@@ -1,8 +1,6 @@
 //! Vault is information per user about their balances in the exchange.
 use crate::*;
 
-pub (crate) type TokenIds = Vec<TokenId>;
-
 #[derive(BorshSerialize, BorshDeserialize, Serialize)]
 #[cfg_attr(feature = "test", derive(Default, Debug, Clone))]
 pub struct Vault {

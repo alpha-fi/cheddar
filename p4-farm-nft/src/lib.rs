@@ -241,7 +241,7 @@ impl Contract {
                     .iter()
                     .map(|rate| U128::from(farmed_tokens(v.farmed, *rate)))
                     .collect();
-                return Some(P4Status {
+                return Some( P4Status {
                     stake_tokens: v.staked,
                     stake: v.min_stake.into(),
                     farmed_units: v.farmed.into(),
