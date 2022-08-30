@@ -55,25 +55,17 @@ impl NonFungibleTokenReceiver for Contract {
             // "to boost" message for transfer P4 boost
             TransferInstruction::ToBoost => {
                 self.assert_is_active();
-                // stake boost
-                let stake_result = self.internal_boost_stake(&previous_owner_id, &nft_contract_id, token_id);
-                if !stake_result {
-                    return PromiseOrValue::Value(true)
-                }
-                return PromiseOrValue::Value(false)
+                self.internal_boost_stake(&previous_owner_id, &nft_contract_id, token_id);
+                return PromiseOrValue::Value(true)
             },
             // "to farm" message for transfer NFT into P4 to stake
             TransferInstruction::ToFarm => {
                 self.assert_is_active();
-                // stake
-                let stake_result = self.internal_nft_stake(&previous_owner_id, &nft_contract_id, token_id);
-                if !stake_result {
-                    return PromiseOrValue::Value(true)
-                }
-                return PromiseOrValue::Value(false)
+                self.internal_nft_stake(&previous_owner_id, &nft_contract_id, token_id);
+                return PromiseOrValue::Value(true)
             }
             // unknown message (or no message) - we are refund
-            TransferInstruction::Unknown => {
+            _ => {
                 log!("ERR_UNKNOWN_MESSAGE");
                 return PromiseOrValue::Value(true)
             }

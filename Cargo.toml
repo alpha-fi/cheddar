@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "cheddar",
+    "./cheddar",
 #    "./p1-staking-pool-fixed",
 #    "./p1-staking-pool-dyn",
-    "p2-token-staking-fixed",
-    "p3-farm",
-    "p3-lib",
-    "p4-farm-nft",
+    "./p2-token-staking-fixed",
+    "./p3-farm",
+    "./p3-lib",
+    "./p4-farm-nft",
 ]
 
 

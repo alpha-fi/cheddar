@@ -1,16 +1,7 @@
 # P4 NFT Token Farm with Many Staked and Many Farmed token types.
 
-The P4 farm allows to stake NFT tokens and farm FT. Constraints:
+The ["P3"](https://https://github.com/alpha-fi/cheddar/blob/master/p3-farm/README.md) farm allows to stake NFT tokens and farm Fungible Tokens with added staked NFT boost.
 
-- The total supply of farmed tokens is fixed = `total_harvested`. This is computed by `reward_rate * number_rounds`.
-- Cheddar/FT is farmed per round. During each round we farm `total_ft/number_rounds`.
-- Each user, in each round will farm proportionally to the amount of NFT tokens (s)he staked.
-
-The contract rewards algorithm is based on the ["Scalable Reward Distribution on the Ethereum
-Blockchain"](https://uploads-ssl.webflow.com/5ad71ffeb79acc67c8bcdaba/5ad8d1193a40977462982470_scalable-reward-distribution-paper.pdf) algorithm.
-
-
-near dev-deploy -f --wasmFile /Users/macbookpro/Documents/GitHub/cheddar/target/wasm32-unknown-unknown/release/p4_farm_nft.wasm
 
 ## Parameters
 
@@ -30,8 +21,8 @@ Let's define a common variables:
 # address of the farm
 FARM=cheddy-nft.cheddar.testnet
 # reward token address
-CHEDDAR=token-v3.cheddar.testnet
-SECOND_FARMED=guacharo.testnet
+FARMING_1=token-v3.cheddar.testnet
+FARMING_2=guacharo.testnet
 # the nft contract address(could be more then one) & token_id(s) we stake
 STAKEING_NFT_CONTRACT_ONE=dev-1648729969586-65831239603610
 TOKEN_ID_ONE_ONE=86
@@ -59,7 +50,7 @@ USER_ID=me.testnet
    near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125 
    near call $SECOND_FARMED storage_deposit '{}' --accountId $FARM --deposit 0.00125
    #SETUP ([amount1, amount2] from finalize_setup_expected())
-   near view $FARM finalize_setup_expected '' --accountId $FARM
+   near view $FARM finalize_setup_expected ''
    near call $CHEDDAR ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"amount1", "msg": "setup reward deposit"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
 
    near call $SECOND_FARMED ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"amount2", "msg": "setup reward deposit"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000

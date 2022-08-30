@@ -17,11 +17,13 @@ use p3_lib::errors::*;
 use p3_lib::interfaces::*;
 
 pub mod helpers;
+pub mod interfaces;
 pub mod storage_management;
 pub mod token_standards;
 pub mod vault;
 
 use crate::helpers::*;
+use crate::interfaces::*;
 use crate::vault::*;
 
 /// Implementing the "Scalable Reward Distribution on the Ethereum Blockchain"
@@ -324,12 +326,11 @@ impl Contract {
     }
 
     /// Unstakes given token and transfers it back to the user.
-    /// If token_id not set - unstake all tokens and close the account
+    /// If there is last staked token in vault - unstake and close the account
     /// NOTE: account once closed must re-register to stake again.
     /// Returns vector of staked tokens left (still staked) after the call.
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet 2FA.
-    /// modify
     #[payable]
     pub fn unstake(&mut self, nft_contract_id: &NftContractId, token_id: TokenId) -> Vec<TokenId> {
         self.assert_is_active();
@@ -362,7 +363,6 @@ impl Contract {
             return;
         }
 
-        // TODO - checked sub?
         let units = min_stake(&vault.staked, &self.stake_rates);
         self.staked_nft_units -= units;
 
@@ -563,7 +563,6 @@ impl Contract {
             U128(self.cheddar_rate)
         };
 
-
         self.total_cheddar_stake -= transfered_amount.0;
         log!("@{} unstake Cheddar locked deposit ( {:?} )", user.clone(), transfered_amount);
         return ext_ft::ext(self.cheddar.clone())
@@ -712,7 +711,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn withdraw_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId, nft_contract_i: usize) {
+    pub fn withdraw_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId, nft_ctr_idx: usize) {
         if promise_result_as_failed() {
             log!(
                 "transferring {} boost NFT failed. Recovering account state",
@@ -721,7 +720,7 @@ impl Contract {
             // recover boost NFT
             let mut v = self.recovered_vault(&user);
 
-            self.total_boost[nft_contract_i] += 1;
+            self.total_boost[nft_ctr_idx] += 1;
 
             v.boost_nft = contract_and_token_id;
             self._recompute_stake(&mut v);

@@ -1,15 +1,28 @@
+use std::convert::TryInto;
+
 use crate::*;
 
-/// NFT constants
+// NFTs types
+pub (crate) type TokenId = String;
+pub (crate) type TokenIds = Vec<TokenId>;
 pub (crate) type NftContractId = AccountId;
+/// `contract_id@token_id` pair
 pub (crate) type ContractNftTokenId = String;
+
 /// NFT Delimeter
+/// Using Paras-HQ standarts `NFT_DELIMETER` for `ContractNftTokenId` format
+/// https://github.com/ParasHQ/paras-nft-farming-contract/blob/f762be16bc68a9c0da2c0ba30fbf555d78162074/ref-farming/src/utils.rs#L20
 pub const NFT_DELIMETER: &str = "@";
 
-/// Computing required amount of staked Cheddar from
+/// Computing required amount of staked Cheddar based on
 /// number of `staked_nft_tokens` and `Contract.cheddar_rate`
-pub fn expected_cheddar_stake(units: usize, cheddar_rate: Balance) -> Balance{
-    (U256::from(units + 1) * U256::from(cheddar_rate)).as_u128()
+pub fn expected_cheddar_stake(num_nfts: usize, cheddar_rate: Balance) -> Balance {
+    let expected_num_nfts_u128: Balance = (num_nfts + 1).try_into().unwrap();
+
+    match expected_num_nfts_u128.checked_mul(cheddar_rate) {
+        Some(balance) => balance,
+        None => panic!("Math overflow while computing expected Cheddar stake")
+    }
 }
 
 pub fn find_token_idx(token: &TokenId, token_v: &Vec<TokenId>) -> usize {
@@ -18,7 +31,7 @@ pub fn find_token_idx(token: &TokenId, token_v: &Vec<TokenId>) -> usize {
 
 pub fn extract_contract_token_ids(contract_and_token_id: &ContractNftTokenId) -> (NftContractId, TokenId) {
     let contract_token_id_split: Vec<&str> = contract_and_token_id.split(NFT_DELIMETER).collect();
-    assert!(contract_token_id_split.len() == 2 as usize, "unexpected length of vector!");
+    assert!(contract_token_id_split.len() == 2 as usize, "expected 'contract_id@token_id' pair");
     let nft_contract_id:AccountId = contract_token_id_split[0].parse().unwrap();
     let token_id:TokenId = contract_token_id_split[1].to_string();
     (nft_contract_id, token_id)
