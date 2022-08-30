@@ -203,12 +203,10 @@ impl Contract {
             log!("Account already has boost NFT deposited. You can only deposit one");
             return false
         }
-        log!("Staking {} NFT - you will obtain a special farming boost", nft_contract_id);
+        let nft_id: ContractNftTokenId = format!("{}{}{}", nft_contract_id, NFT_DELIMETER, token);
+        log!("Staking {} NFT - you will obtain a special farming boost", nft_id);
         self.ping_all(&mut v);
-
-        let contract_token_id:ContractNftTokenId = format!("{}{}{}", nft_contract_id, NFT_DELIMETER, token);
-
-        v.boost_nft = contract_token_id.clone();
+        v.boost_nft = nft_id.clone();
 
         // update total staked info about this token
         self.total_boost[nft_contract_i] += 1;
