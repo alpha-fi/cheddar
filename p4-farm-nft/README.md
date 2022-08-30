@@ -1,6 +1,6 @@
 # P4 NFT Token Farm with Many Staked and Many Farmed token types.
 
-The ["P3"](https://https://github.com/alpha-fi/cheddar/blob/master/p3-farm/README.md) farm allows to stake NFT tokens and farm Fungible Tokens with added staked NFT boost.
+The ["P3"](https://github.com/alpha-fi/cheddar/blob/master/p3-farm/README.md) farm allows to stake NFT tokens and farm Fungible Tokens with added staked NFT boost.
 
 
 ## Parameters
@@ -49,6 +49,7 @@ USER_ID=me.testnet
    #REGISTER FARM INTO FARM TOKENS
    near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125 
    near call $SECOND_FARMED storage_deposit '{}' --accountId $FARM --deposit 0.00125
+   
    #SETUP ([amount1, amount2] from finalize_setup_expected())
    near view $FARM finalize_setup_expected ''
    near call $CHEDDAR ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"amount1", "msg": "setup reward deposit"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
