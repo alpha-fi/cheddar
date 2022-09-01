@@ -55,13 +55,13 @@ impl NonFungibleTokenReceiver for Contract {
             // "to boost" message for transfer P4 boost
             TransferInstruction::ToBoost => {
                 self.assert_is_active();
-                self.internal_boost_stake(&previous_owner_id, &nft_contract_id, token_id);
+                self._boost_stake(&previous_owner_id, &nft_contract_id, token_id);
                 return PromiseOrValue::Value(true)
             },
             // "to farm" message for transfer NFT into P4 to stake
             TransferInstruction::ToFarm => {
                 self.assert_is_active();
-                self.internal_nft_stake(&previous_owner_id, &nft_contract_id, token_id);
+                self._nft_stake(&previous_owner_id, &nft_contract_id, token_id);
                 return PromiseOrValue::Value(true)
             }
             // unknown message (or no message) - we are refund
@@ -104,7 +104,7 @@ impl FungibleTokenReceiver for Contract {
         } else {
             // cheddar staking
             if msg == "cheddar stake" {
-                self.setup_cheddar_payment(&sender_id, amount.0);
+                self.stake_cheddar(&sender_id, amount.0);
             } else {
                 log!(
                     "Contract accept only NFT farming and staking! 

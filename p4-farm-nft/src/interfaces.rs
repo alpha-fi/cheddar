@@ -23,7 +23,6 @@ pub struct P4ContractParams {
     pub total_farmed: Vec<U128>,
     /// total boost is total amount of NFT tokens staked as a boost
     pub total_boost: Vec<U128>,
-    pub fee_rate: U128,
     /// Number of accounts currently registered.
     pub accounts_registered: u64,
     /// Cheddar deposits

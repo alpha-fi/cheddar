@@ -23,7 +23,7 @@ pub struct Vault {
     pub boost_nft: ContractNftTokenId,
     /// Staked Cheddar. Equals to `Contract.cheddar_rate` * total_staked_tokens.
     /// not depends on which NFT contract staked more or less tokens, rate used as a const
-    pub total_cheddar_staked: Balance
+    pub cheddar_staked: Balance
 }
 
 impl Vault {
@@ -35,7 +35,7 @@ impl Vault {
             farmed: 0,
             farmed_recovered: vec![0; farmed_len],
             boost_nft: TokenId::new(),
-            total_cheddar_staked: 0
+            cheddar_staked: 0
         }
     }
 
@@ -62,7 +62,7 @@ impl Vault {
     /// If all vault's units is empty returns true
     #[inline]
     pub fn is_empty(&self) -> bool {
-        all_zeros(&self.staked) && self.farmed == 0 && self.boost_nft.is_empty()
+        all_zeros(&self.staked) && self.farmed == 0 && self.boost_nft.is_empty() && self.cheddar_staked == 0
     }
     /// Returns amount of user NFT tokens staked (from all supported NFT contracts).
     pub fn get_number_of_staked_tokens(&self) -> usize {
@@ -80,10 +80,10 @@ impl Contract {
         self.vaults.get(account_id).expect(ERR10_NO_ACCOUNT)
     }
 
-    pub(crate) fn ping_all(&mut self, v: &mut Vault) {
+    pub(crate) fn ping_all(&mut self, vault: &mut Vault) {
         let r = self.current_round();
         self.update_reward_acc(r);
-        v.ping(self.reward_acc, r);
+        vault.ping(self.reward_acc, r);
     }
 
     /// updates the rewards accumulator
@@ -91,7 +91,7 @@ impl Contract {
         let new_acc = self.compute_reward_acc(round);
         // we should advance with rounds if self.t is zero, otherwise we have a jump and
         // don't compute properly the accumulator.
-        if self.staked_nft_units == 0 || new_acc != self.reward_acc {
+        if self.staked_units == 0 || new_acc != self.reward_acc {
             self.reward_acc = new_acc;
             self.reward_acc_round = round;
         }
@@ -102,20 +102,20 @@ impl Contract {
     /// `self.rate * ACC_OVERFLOW / self.t < 1`
     pub(crate) fn compute_reward_acc(&self, round: u64) -> u128 {
         // covers also when round == 0
-        if self.reward_acc_round == round || self.staked_nft_units == 0 {
+        if self.reward_acc_round == round || self.staked_units == 0 {
             return self.reward_acc;
         }
 
         self.reward_acc
             + u128::from(round - self.reward_acc_round) * self.farm_unit_emission * ACC_OVERFLOW
-                / u128::from(self.staked_nft_units)
+                / u128::from(self.staked_units)
     }
 
-    pub(crate) fn _recompute_stake(&mut self, v: &mut Vault) {
-        let mut s = min_stake(&v.staked, &self.stake_rates);
+    pub(crate) fn _recompute_stake(&mut self, vault: &mut Vault) {
+        let mut s = min_stake(&vault.staked, &self.stake_rates);
 
-        if !v.boost_nft.is_empty() {
-            let (boost_contract, _) = extract_contract_token_ids(&v.boost_nft);
+        if !vault.boost_nft.is_empty() {
+            let (boost_contract, _) = extract_contract_token_ids(&vault.boost_nft);
             let nft_boost_rate = if boost_contract == self.cheddy {
                 self.cheddy_boost
             } else {
@@ -124,14 +124,14 @@ impl Contract {
             s += s * u128::from(nft_boost_rate) / BASIS_P;
         }
 
-        if s > v.min_stake {
-            let diff = s - v.min_stake;
-            self.staked_nft_units += diff; // must be called after ping_s
-            v.min_stake = s;
-        } else if s < v.min_stake {
-            let diff = v.min_stake - s;
-            self.staked_nft_units -= diff; // must be called after ping_s
-            v.min_stake = s;
+        if s > vault.min_stake {
+            let diff = s - vault.min_stake;
+            self.staked_units += diff; // must be called after ping_s
+            vault.min_stake = s;
+        } else if s < vault.min_stake {
+            let diff = vault.min_stake - s;
+            self.staked_units -= diff; // must be called after ping_s
+            vault.min_stake = s;
         }
     }
 
@@ -143,40 +143,39 @@ impl Contract {
     /// he can stake `5 NFT tokens`.
     /// so, if user have `5 staked NFT` now and `5 * cheddar_charge` Cheddar staked
     /// he cannot stake more NFT before `1 * cheddar_charge` will be deposited
-    pub(crate) fn internal_nft_stake(
+    pub(crate) fn _nft_stake(
         &mut self,
         user: &AccountId,
         nft_contract_id: &NftContractId,
-        token: TokenId,
+        token_id: TokenId,
     ) -> bool {
         // find index for staking token into Contract.stake_tokens
-        
-        let nft_contract_i = find_acc_idx(nft_contract_id, &self.stake_nft_tokens);
-        let mut v = self.get_vault(&user);
+        let nft_ctr_idx = find_acc_idx(nft_contract_id, &self.stake_nft_tokens);
+        let mut vault = self.get_vault(&user);
 
         // firstly check cheddar stake
-        let total_staked_tokens = v.get_number_of_staked_tokens();
+        let total_staked_tokens = vault.get_number_of_staked_tokens();
 
         // we expect for user who stake one more token have enough cheddar staked
         let expected = expected_cheddar_stake(total_staked_tokens, self.cheddar_rate);
         assert!(
-            v.total_cheddar_staked >= expected, 
+            vault.cheddar_staked >= expected, 
             "You need to stake {} yoctoCheddar more to stake one more NFT token",            
-            expected - v.total_cheddar_staked >= expected, 
+            expected - vault.cheddar_staked, 
         );
 
         // then update the past rewards
-        self.ping_all(&mut v);
+        self.ping_all(&mut vault);
         // after that add "token" to staked into vault
-        v.staked[nft_contract_i].push(token.clone());
+        vault.staked[nft_ctr_idx].push(token_id.clone());
         // update total staked info about this token
-        self.total_stake[nft_contract_i] += 1;
+        self.total_stake[nft_ctr_idx] += 1;
 
-        self._recompute_stake(&mut v);
-        self.vaults.insert(user, &v);
+        self._recompute_stake(&mut vault);
+        self.vaults.insert(user, &vault);
         log!(
             "Staked {}@{}, stake_units: {}", 
-            nft_contract_id, token.clone(), v.min_stake
+            nft_contract_id, token_id.clone(), vault.min_stake
         );
 
         true
@@ -184,31 +183,32 @@ impl Contract {
     /// Returns boost stake operation status.
     /// Stake works only for 1 NFT token coming at the moment.
     /// Revert transfer if nft_contract (`predecessor_account_id`) not in `Contract.boost_nft_contracts`
-    pub (crate) fn internal_boost_stake(
+    pub (crate) fn _boost_stake(
         &mut self,
         user: &AccountId,
         nft_contract_id: &NftContractId,
-        token: TokenId
+        token_id: TokenId
     ) -> bool {
         // find index for boost token into Contract.boost_nft_contracts
         // Option to refund if `nft_contract_i` not in required for stake NFT contracts
-        let nft_contract_i = find_acc_idx(&nft_contract_id, &self.boost_nft_contracts);
-        let mut v = self.get_vault(&user);
+        let nft_ctr_idx = find_acc_idx(&nft_contract_id, &self.boost_nft_contracts);
+        let mut vault = self.get_vault(&user);
 
-        if !v.boost_nft.is_empty() {
+        if !vault.boost_nft.is_empty() {
             log!("Account already has boost NFT deposited. You can only deposit one");
             return false
         }
-        let nft_id: ContractNftTokenId = format!("{}{}{}", nft_contract_id, NFT_DELIMETER, token);
-        log!("Staking {} NFT - you will obtain a special farming boost", nft_id);
-        self.ping_all(&mut v);
-        v.boost_nft = nft_id.clone();
+        let contract_token_id: ContractNftTokenId = format!("{}{}{}", nft_ctr_idx, NFT_DELIMETER, token_id);
+        log!("Staking {} NFT - you will obtain a special farming boost", contract_token_id);
+        
+        self.ping_all(&mut vault);
+        vault.boost_nft = contract_token_id.clone();
 
         // update total staked info about this token
-        self.total_boost[nft_contract_i] += 1;
+        self.total_boost[nft_ctr_idx] += 1;
 
-        self._recompute_stake(&mut v);
-        self.vaults.insert(&user, &v);
+        self._recompute_stake(&mut vault);
+        self.vaults.insert(&user, &vault);
         log!(
             "Added boost to user @{} with {}", 
             user, contract_token_id.clone()
@@ -218,36 +218,37 @@ impl Contract {
 
     /// Returns remaining amount of NFTs from `nft_contract_id` which user has staked after function call.    
     /// Panics if `token_id` is not supported or not staked by a user.
-    pub(crate) fn internal_nft_unstake(
+    pub(crate) fn _nft_unstake(
         &mut self,
-        receiver_id: &AccountId,
+        user: &AccountId,
         nft_contract_id: &NftContractId,
         token_id: TokenId,
     ) -> Vec<String> {
         // getting contract, token and user vault
-        let nft_contract_i = find_acc_idx(nft_contract_id, &self.stake_nft_tokens);
-        let mut v = self.get_vault(receiver_id);
-        let token_i = find_token_idx(&token_id, &v.staked[nft_contract_i]);
+        let nft_ctr_idx = find_acc_idx(nft_contract_id, &self.stake_nft_tokens);
+        let mut vault = self.get_vault(user);
+        let token_idx = find_token_idx(&token_id, &vault.staked[nft_ctr_idx]);
 
         // check if we are withdraw last staked token
-        if v.get_number_of_staked_tokens() == 1 {
+        // todo - double check for total_stake and total_cheddar_staked
+        if vault.get_number_of_staked_tokens() == 1 {
             log!("unstaked last staked token - closing account");
             self.close();
             return vec![];
         }
 
-        self.ping_all(&mut v);
+        self.ping_all(&mut vault);
         // remove token from vault
-        let removed_token_id = v.staked[nft_contract_i].remove(token_i);
-        let remaining_tokens = v.staked[nft_contract_i].clone();
+        let removed_token_id = vault.staked[nft_ctr_idx].remove(token_idx);
+        let remaining_tokens = vault.staked[nft_ctr_idx].clone();
 
-        self._recompute_stake(&mut v);
+        self._recompute_stake(&mut vault);
         
         // staked cheddar keeps on vault
         // v.total_cheddar_staked -= self.cheddar_rate;
-        self.vaults.insert(receiver_id, &v);
+        self.vaults.insert(user, &vault);
 
-        self.transfer_staked_nft_token(receiver_id.clone(), nft_contract_i, removed_token_id);
+        self.transfer_staked_nft(user.clone(), nft_ctr_idx, removed_token_id);
         
         // staked cheddar keeps on vault
         // self.transfer_staked_cheddar(receiver_id.clone(), None);
@@ -258,12 +259,12 @@ impl Contract {
     pub(crate) fn _withdraw_boost_nft(
         &mut self, 
         user: &AccountId, 
-        v: &mut Vault, 
+        vault: &mut Vault, 
     ) {
-        assert!(!v.boost_nft.is_empty(), "Sender has no NFT deposit");
-        self.ping_all(v);
+        assert!(!vault.boost_nft.is_empty(), "Sender has no NFT deposit");
+        self.ping_all(vault);
 
-        let (boost_nft_contract_id, boost_nft_token_id) = extract_contract_token_ids(&v.boost_nft);
+        let (boost_nft_contract_id, boost_nft_token_id) = extract_contract_token_ids(&vault.boost_nft);
         let nft_ctr_idx = find_acc_idx(&boost_nft_contract_id, &self.boost_nft_contracts);
 
         self.total_boost[nft_ctr_idx] -= 1;
@@ -279,15 +280,15 @@ impl Contract {
             )
             .then( Self::ext(env::current_account_id())
                 .with_static_gas(GAS_FOR_CALLBACK)
-                .withdraw_nft_callback(
+                .withdraw_boost_nft_callback(
                     user.clone(), 
-                    v.boost_nft.clone(),
+                    vault.boost_nft.clone(),
                     nft_ctr_idx
                 )
             );
 
-        v.boost_nft = "".into();
-        self._recompute_stake(v);
-        self.vaults.insert(&user, &v);
+        vault.boost_nft = "".into();
+        self._recompute_stake(vault);
+        self.vaults.insert(&user, &vault);
     }
 }

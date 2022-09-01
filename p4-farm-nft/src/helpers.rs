@@ -2,6 +2,10 @@ use std::convert::TryInto;
 
 use crate::*;
 
+/// Respresents amount of maximun possible num of tokens for user
+/// who now on close his account with calling `Contract::close`
+pub(crate) const NFT_UNITS_MAX_TRANSFER_NUM:usize = 5;
+
 // NFTs types
 pub (crate) type TokenId = String;
 pub (crate) type TokenIds = Vec<TokenId>;

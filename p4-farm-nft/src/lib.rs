@@ -45,7 +45,7 @@ pub struct Contract {
     /// Nft contract ids allowed to stake in farm
     pub stake_nft_tokens: Vec<NftContractId>,
     /// total number of units currently staked
-    pub staked_nft_units: u128,
+    pub staked_units: u128,
     /// Rate between the staking token and stake units.
     /// When farming the `min(staking_token[i]*stake_rate[i]/1e24)` is taken
     /// to allocate farm_units.
@@ -91,14 +91,6 @@ pub struct Contract {
     total_cheddar_stake: Balance,
     /// total number of accounts currently registered.
     pub accounts_registered: u64,
-    /// Free rate in basis points. The fee is charged from the user staked tokens
-    /// on withdraw. Example: if fee=2 and user withdraws 10000e24 staking tokens
-    
-    /// then the protocol will charge 2e24 staking tokens.
-    pub fee_rate: u128,
-    /// amount of fee collected (in staking token).
-    pub fee_collected: Vec<Balance>,
-
     /// charge in Cheddar from stakers for 1 staked NFT token
     pub cheddar_rate: Balance,
     /// Cheddar contract AccountId
@@ -132,7 +124,6 @@ impl Contract {
         cheddy_boost: u32,
         cheddar_rate: U128,
         cheddar: AccountId,
-        fee_rate: u32,
         treasury: AccountId,
     ) -> Self {
         assert!(
@@ -153,7 +144,7 @@ impl Contract {
             treasury,
             vaults: LookupMap::new(b"v".to_vec()),
             stake_nft_tokens,
-            staked_nft_units: 0,
+            staked_units: 0,
             stake_rates: stake_rates.iter().map(|x| x.0).collect(),
             farm_tokens,
             farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
@@ -172,8 +163,6 @@ impl Contract {
             total_stake: vec![0; stake_len],
             total_cheddar_stake: 0,
             accounts_registered: 0,
-            fee_rate: fee_rate.into(),
-            fee_collected: vec![0; stake_len],
             cheddar_rate: cheddar_rate.0,
             cheddar
         };
@@ -193,8 +182,7 @@ impl Contract {
         );
         assert!(
             sl == self.stake_rates.len()
-                && sl == self.total_stake.len()
-                && sl == self.fee_collected.len(),
+                && sl == self.total_stake.len(),
             "stake token vector length is not correct"
         );
         assert!(
@@ -224,7 +212,6 @@ impl Contract {
             total_staked: to_U128s(&self.total_stake),
             total_farmed: to_U128s(&self.total_harvested),
             total_boost: to_U128s(&self.total_boost),
-            fee_rate: self.fee_rate.into(),
             accounts_registered: self.accounts_registered,
             cheddar_rate: U128(self.cheddar_rate),
             cheddar: self.cheddar.clone()
@@ -250,7 +237,7 @@ impl Contract {
                     farmed_tokens: farmed,
                     boost_nfts: v.boost_nft,
                     timestamp: self.farming_start + r0 * ROUND,
-                    total_cheddar_staked: v.total_cheddar_staked.into()
+                    total_cheddar_staked: v.cheddar_staked.into()
                 });
             }
             None => None,
@@ -304,25 +291,25 @@ impl Contract {
     }
 
     /// FT Receiver `cheddar stake` scenario
-    pub(crate) fn setup_cheddar_payment(&mut self, sender_id: &AccountId, amount: u128) {
+    pub(crate) fn stake_cheddar(&mut self, sender_id: &AccountId, amount: u128) {
         self.assert_is_active();
         let user = sender_id.clone();
-        let mut v = self.get_vault(&user);
+        let mut vault = self.get_vault(&user);
 
         // Expected cheddar for stake per one token
         let expected = self.cheddar_rate;
-        assert_eq!(
-            expected, amount, 
+        assert!(
+            expected >= amount, 
             "User need at least {} to stake one more token. Got {}",
             self.cheddar_rate, amount
         );
 
         // update vault
-        v.total_cheddar_staked += amount;
+        vault.cheddar_staked += amount;
         // update total cheddar staked info
         self.total_cheddar_stake += self.cheddar_rate;
         log!("User stake {} Cheddar, which is required rate for stake 1 NFT token more", amount);
-        self.vaults.insert(&sender_id, &v);
+        self.vaults.insert(&sender_id, &vault);
     }
 
     /// Unstakes given token and transfers it back to the user.
@@ -336,62 +323,71 @@ impl Contract {
         self.assert_is_active();
         assert_one_yocto();
         let user = env::predecessor_account_id();
-        self.internal_nft_unstake(&user, nft_contract_id, token_id)
+        self._nft_unstake(&user, nft_contract_id, token_id)
     }
 
     /// Unstakes everything and close the account. Sends all farmed tokens using a ft_transfer
     /// and all staked tokens back to the caller.
     /// Panics if the caller doesn't stake anything.
     /// Requires 1 yNEAR payment for wallet validation.
-    /// Max unstaking tokens per time limited - 4 tokens (greedy gas).
+    /// Max unstaking tokens per time limited - 5 tokens (greedy gas).
     #[payable]
     pub fn close(&mut self) {
         self.assert_is_active();
         assert_one_yocto();
 
-        let account_id = env::predecessor_account_id();
-        let mut vault = self.get_vault(&account_id);
+        let user = env::predecessor_account_id();
+        let mut vault = self.get_vault(&user);
+
+        assert!(
+            vault.get_number_of_staked_tokens() <= NFT_UNITS_MAX_TRANSFER_NUM,
+            "Because of gas limit for single transaction action is not allowed. 
+            You have {} staked NFTs in vault. Max allowed num on close account: {}. 
+            Use `unstake` instead",
+            vault.get_number_of_staked_tokens(), NFT_UNITS_MAX_TRANSFER_NUM
+        );
+
         self.ping_all(&mut vault);
-        log!("Closing {} account, farmed: {:?}", &account_id, vault.farmed);
+        log!("Closing {} account, farmed: {:?}", &user, vault.farmed);
 
         // if user doesn't stake anything and has no rewards then we can make a shortcut
         // and remove the account and return storage deposit.
         if vault.is_empty() {
             self.accounts_registered -= 1;
-            self.vaults.remove(&account_id);
-            Promise::new(account_id.clone()).transfer(STORAGE_COST);
+            self.vaults.remove(&user);
+            Promise::new(user.clone()).transfer(STORAGE_COST);
             return;
         }
 
         let units = min_stake(&vault.staked, &self.stake_rates);
-        self.staked_nft_units -= units;
+        self.staked_units -= units;
 
         // transfer all tokens to user
-        for nft_contract_id in 0..self.total_stake.len() {
-            let staked_tokens_ids = &vault.staked[nft_contract_id];
-            for token_id in 0..staked_tokens_ids.clone().len() {
-                self.transfer_staked_nft_token(
-                    account_id.clone(), 
-                    nft_contract_id, 
-                    staked_tokens_ids[token_id].clone()
+        for nft_ctr_idx in 0..self.total_stake.len() {
+            let staked_tokens_ids = &vault.staked[nft_ctr_idx];
+            for token_idx in 0..staked_tokens_ids.clone().len() {
+                self.transfer_staked_nft(
+                    user.clone(), 
+                    nft_ctr_idx, 
+                    staked_tokens_ids[token_idx].clone()
                 );
             }
         }
         // withdraw farmed to user
-        self._withdraw_crop(&account_id, vault.farmed);
+        self._withdraw_crop(&user, vault.farmed);
 
         if !vault.boost_nft.is_empty() {
-            self._withdraw_boost_nft(&account_id, &mut vault);
+            self._withdraw_boost_nft(&user, &mut vault);
         }
 
-        if vault.total_cheddar_staked > 0 {
-            self.transfer_staked_cheddar(account_id.clone(), Some(vault.total_cheddar_staked));
+        if vault.cheddar_staked > 0 {
+            self.transfer_staked_cheddar(user.clone(), Some(vault.cheddar_staked));
         }
 
         // NOTE: we don't return deposit because it will dramatically complicate logic
         // in case we need to recover an account.
         self.accounts_registered -= 1;
-        self.vaults.remove(&account_id);
+        self.vaults.remove(&user);
     }
 
     /// Withdraws all farmed tokens to the user. It doesn't close the account.
@@ -439,34 +435,6 @@ impl Contract {
         self.transfer_farmed_tokens(&a, token_i, amount);
     }
 
-    /// Returns the amount of collected fees which are not withdrawn yet.
-    pub fn get_collected_fee(&self) -> Vec<U128> {
-        to_U128s(&self.fee_collected)
-    }
-
-    /// Withdraws all collected fee to the treasury.
-    /// Must make sure treasury is registered
-    /// Panics if the collected fees == 0.
-    pub fn withdraw_fees(&mut self) {
-        log!("Withdrawing collected fee: {:?} tokens", self.fee_collected);
-        for i in 0..self.stake_nft_tokens.len() {
-            if self.fee_collected[i] != 0 {
-                ext_ft::ext(self.stake_nft_tokens[i].clone())
-                    .with_attached_deposit(ONE_YOCTO)
-                    .with_static_gas(GAS_FOR_FT_TRANSFER)
-                    .ft_transfer(
-                        self.treasury.clone(), 
-                        self.fee_collected[i].into(),
-                        Some("fee withdraw".to_string()), 
-                    )
-                .then(Self::ext(env::current_account_id())
-                    .with_static_gas(GAS_FOR_CALLBACK)
-                    .withdraw_fees_callback(i, self.fee_collected[i].into()));
-                self.fee_collected[i] = 0;
-            }
-        }
-    }
-
     // ******************* //
     //     management      //
     // ******************* //
@@ -490,20 +458,6 @@ impl Contract {
         self.farming_end = end;
     }
 
-    /// withdraws farming tokens back to owner
-    pub fn admin_withdraw(&mut self, token: AccountId, amount: U128) {
-        self.assert_owner();
-        // TODO: double check if we want to enable user funds recovery here.
-        // If not then we need to check if token is in farming_tokens
-        ext_ft::ext(token.clone())
-            .with_attached_deposit(ONE_YOCTO)
-            .with_static_gas(GAS_FOR_FT_TRANSFER)
-            .ft_transfer(
-                self.owner_id.clone(),
-                amount,
-                Some("admin-withdrawing-back".to_string())
-            );
-    }
     pub fn finalize_setup(&mut self) {
         //self.assert_owner();
         assert!(
@@ -565,6 +519,7 @@ impl Contract {
 
         self.total_cheddar_stake -= transfered_amount.0;
         log!("@{} unstake Cheddar locked deposit ( {:?} )", user.clone(), transfered_amount);
+        
         return ext_ft::ext(self.cheddar.clone())
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
@@ -583,19 +538,14 @@ impl Contract {
     /// self.stake_tokens) back to the user.
     /// `self.staked_units` must be adjusted in the caller. The callback will fix the
     /// `self.staked_units` if the transfer will fails.
-    fn transfer_staked_nft_token(&mut self, user: AccountId, nft_contract_i: usize, token_id: TokenId) -> Promise {
+    fn transfer_staked_nft(&mut self, user: AccountId, nft_ctr_idx: usize, token_id: TokenId) -> Promise {
+
+        let nft_contract_id = &self.stake_nft_tokens[nft_ctr_idx];
+        log!("unstaking {} token @{}", nft_contract_id, token_id);
+
+        self.total_stake[nft_ctr_idx] -= 1;
         
-        // We are withdraw 1 NFT token. Unimplemented fee from FT farms:
-
-        // let fee = amount * self.fee_rate / BASIS_P;
-        // let amount = amount - fee;
-
-        let nft_contract = &self.stake_nft_tokens[nft_contract_i];
-        log!("unstaking {} token @{}", nft_contract, token_id);
-
-        self.total_stake[nft_contract_i] -= 1;
-        
-        return ext_nft::ext(nft_contract.clone())
+        return ext_nft::ext(nft_contract_id.clone())
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
             .nft_transfer(
@@ -608,26 +558,26 @@ impl Contract {
             .with_static_gas(GAS_FOR_CALLBACK)
             .transfer_staked_callback(
                 user,
-                nft_contract_i,
+                nft_ctr_idx,
                 token_id.clone().into(),
             )
         )
     }
 
     #[inline]
-    fn transfer_farmed_tokens(&mut self, user: &AccountId, token_i: usize, amount: u128) -> Promise {
-        let token = &self.farm_tokens[token_i];
-        log!("transfer farmed token: @{} ", token.clone());
-        self.total_harvested[token_i] += amount;
-        self.farm_deposits[token_i] -= amount;
+    fn transfer_farmed_tokens(&mut self, user: &AccountId, token_idx: usize, amount: u128) -> Promise {
+        let ft_contract_id = &self.farm_tokens[token_idx];
+        log!("transfer farmed token: @{} ", ft_contract_id.clone());
+        self.total_harvested[token_idx] += amount;
+        self.farm_deposits[token_idx] -= amount;
 
-        if token == &near() {
+        if ft_contract_id == &near() {
             return Promise::new(user.clone()).transfer(amount);
         }
 
         let amount: U128 = amount.into();
 
-        return ext_ft::ext(token.clone())
+        return ext_ft::ext(ft_contract_id.clone())
             .with_attached_deposit(ONE_YOCTO)
             .with_static_gas(GAS_FOR_FT_TRANSFER)
             .ft_transfer(user.clone(), amount, Some("farming".to_string()))
@@ -635,7 +585,7 @@ impl Contract {
             .with_static_gas(GAS_FOR_CALLBACK)
             .transfer_farmed_callback(
                 user.clone(), 
-                token_i, 
+                token_idx, 
                 amount
             )
         )
@@ -645,45 +595,47 @@ impl Contract {
     pub fn transfer_staked_callback(
         &mut self,
         user: AccountId,
-        nft_contract_i: usize,
+        nft_ctr_idx: usize,
         token_id: TokenId,
-        //fee: U128,
     ) { 
         if promise_result_as_failed() {
             log!(
                 "transferring token: {} contract: {}  failed. Recovering account state",
                 token_id,
-                self.stake_nft_tokens[nft_contract_i],
+                self.stake_nft_tokens[nft_ctr_idx],
             );
 
-            // Unimplemented fees:
-            // let full_amount = amount + fee.0;
+            self.total_stake[nft_ctr_idx] += 1;
 
-            self.total_stake[nft_contract_i] += 1;
-
-            //recover only token, fee is unimplemented now
             self.recover_state(
                 &user, 
                 true,  // is_staked
-                nft_contract_i,  // NFT Contract
+                nft_ctr_idx,  // NFT Contract
                 Some(token_id),  // NFT TokenId
                 None  // no amount - unique token
             );
         }
     }
 
+    // find mistake
+
     #[private]
-    pub fn transfer_farmed_callback(&mut self, user: AccountId, token_i: usize, amount: U128) {
+    pub fn transfer_farmed_callback(
+        &mut self, 
+        user: AccountId, 
+        ft_ctr_idx: usize,  
+        amount: U128
+    ) {
         if promise_result_as_failed() {
             log!(
                 "harvesting {} {} token failed. recovering account state",
                 amount.0,
-                self.stake_nft_tokens[token_i],
+                self.farm_tokens[ft_ctr_idx],
             );
             self.recover_state(
                 &user, 
                 false,      // is_staked
-                token_i,   // FT Contract
+                ft_ctr_idx,   // FT Contract
                 None,        // no token_ids - FT Contract 
                 Some(amount.0) // amount of farmed FTs
             );
@@ -700,10 +652,8 @@ impl Contract {
             );
             // recover cheddar
             self.total_cheddar_stake += amount.0;
-
             let mut v = self.recovered_vault(&user);
-
-            v.total_cheddar_staked += amount.0;
+            v.cheddar_staked += amount.0;
 
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
@@ -711,7 +661,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn withdraw_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId, nft_ctr_idx: usize) {
+    pub fn withdraw_boost_nft_callback(&mut self, user: AccountId, contract_and_token_id: ContractNftTokenId, nft_ctr_idx: usize) {
         if promise_result_as_failed() {
             log!(
                 "transferring {} boost NFT failed. Recovering account state",
@@ -725,19 +675,6 @@ impl Contract {
             v.boost_nft = contract_and_token_id;
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
-        }
-    }
-
-    #[private]
-    pub fn withdraw_fees_callback(&mut self, token_i: usize, amount: U128) {
-        if promise_result_as_failed() {
-            log!(
-                "transferring fees {} contract {} failed. Recovering contract state",
-                amount.0,
-                self.stake_nft_tokens[token_i],
-            );
-            
-            self.fee_collected[token_i] += amount.0;
         }
     }
 
@@ -905,7 +842,6 @@ mod tests {
     fn setup_contract(
         predecessor: AccountId,
         deposit_dec: u128,
-        fee_rate: u32,
         stake_nft_tokens: Option<Vec<AccountId>>,
         stake_rates: Option<Vec<u128>>,
         farm_unit_emission: u128,
@@ -928,7 +864,6 @@ mod tests {
             CHEDDY_BOOST,                                       // cheddy boost rate
             U128(CHEDDAR_RATE),                   // cheddar charge per 1 staked NFT
             acc_cheddar(),                      
-            fee_rate,
             accounts(1),  // treasury
         );
         contract.check_vectors();
@@ -1035,7 +970,6 @@ mod tests {
         let (_, mut ctr) = setup_contract(
             acc_owner(),
             5, 
-            0,
             None,
             None,
             RATE,
@@ -1052,7 +986,6 @@ mod tests {
         let (_, mut ctr) = setup_contract(
             accounts(0), 
             0,
-            1,
             None,
             None,
             RATE,
@@ -1072,7 +1005,6 @@ mod tests {
         let (_, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1092,7 +1024,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1107,21 +1038,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected deposit for token cheddar is 20000000000000000000000000")]
     fn test_finalize_setup_wrong_deposit() {
-        let (_, mut ctr) = setup_contract(accounts(1), 0, 0, None, None, RATE, END);
+        let (_, mut ctr) = setup_contract(accounts(1), 0, None, None, RATE, END);
         ctr._setup_deposit(&acc_cheddar().into(), 10 * E24);
     }
 
     #[test]
     #[should_panic(expected = "Deposit for token farming_token not done")]
     fn test_finalize_setup_not_enough_deposit() {
-        let (_, mut ctr) = setup_contract(acc_owner(), 0, 0, None, None, RATE, END);
+        let (_, mut ctr) = setup_contract(acc_owner(), 0, None, None, RATE, END);
         ctr._setup_deposit(&acc_cheddar().into(), 20 * E24);
         ctr.finalize_setup();
     }
 
     #[test]
     fn test_round_number() {
-        let (mut ctx, ctr) = setup_contract(acc_u1(), 0, 0, None, None, RATE, END);
+        let (mut ctx, ctr) = setup_contract(acc_u1(), 0, None, None, RATE, END);
         assert_eq!(ctr.current_round(), 0);
 
         assert_eq!(round(-9), ROUND_NS);
@@ -1152,7 +1083,7 @@ mod tests {
         expected = "The attached deposit is less than the minimum storage balance (60000000000000000000000)"
     )]
     fn test_min_storage_deposit() {
-        let (mut ctx, mut ctr) = setup_contract(acc_u1(), 0, 0, None, None, RATE, END);
+        let (mut ctx, mut ctr) = setup_contract(acc_u1(), 0, None, None, RATE, END);
         testing_env!(ctx.attached_deposit(STORAGE_COST / 4).build());
         ctr.storage_deposit(None, None);
     }
@@ -1163,7 +1094,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1195,7 +1125,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(),
             0, 
-            0,
             Some(vec![acc_staking1()]),
             Some(vec![E24]),
             RATE,
@@ -1232,7 +1161,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1261,7 +1189,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1296,7 +1223,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1331,7 +1257,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1492,7 +1417,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1552,7 +1476,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft1.clone()]),
             Some(vec![E24/10]),
             RATE,
@@ -1693,7 +1616,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             user_1.clone(), 
             0, 
-            0,
             None,
             None,
             RATE,
@@ -1808,7 +1730,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft1.clone()]),
             Some(vec![E24]),
             RATE,
@@ -1886,7 +1807,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft1.clone()]),
             Some(vec![E24/20]),
             RATE,
@@ -1959,7 +1879,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft_1.clone()]),
             Some(vec![E24]),
             E23RATE,
@@ -2163,7 +2082,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft1.clone()]),
             Some(vec![E24]),
             RATE,
@@ -2283,7 +2201,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft_1.clone(), nft_2.clone()]),
             Some(vec![E24, E24/2]),
             E23RATE,
@@ -2379,7 +2296,6 @@ mod tests {
         let (mut ctx, mut ctr) = setup_contract(
             acc_owner(),
             0, 
-            0,
             Some(vec![nft_1.clone(), nft_2.clone()]),
             Some(vec![E24, E24/2]),
             E23RATE,
