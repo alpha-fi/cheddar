@@ -6,7 +6,7 @@ use crate::*;
 pub struct Vault {
     /// Contract.reward_acc value when the last ping was called and rewards calculated
     pub reward_acc: Balance,
-    /// Staking tokens locked in this vault
+    /// Staked NFTs in this vault
     /// index - contract id
     /// value - token ids - []
     pub staked: Vec<TokenIds>,
