@@ -47,7 +47,7 @@ pub struct Contract {
     /// total number of units currently staked
     pub staked_nft_units: u128,
     /// Rate between the staking token and stake units.
-    /// When farming the `min(staking_token[i]*stake_rate[i]/1e24)` is taken
+    /// When farming the `min(sum(vault.staked[i])*stake_rate[i]/1e24)` is taken
     /// to allocate farm_units.
     pub stake_rates: Vec<u128>,
 
