@@ -278,6 +278,7 @@ impl Contract {
     pub fn setup_deposit_near(&mut self) {
         self._setup_deposit(&near(), env::attached_deposit())
     }
+
     /// FT Receiver `setup deposit` scenario
     /// Panics on failed `unwrap()` if FT not set in `Contract.farm_tokens`
     pub(crate) fn _setup_deposit(&mut self, token: &AccountId, amount: u128) {
