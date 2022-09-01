@@ -313,8 +313,8 @@ impl Contract {
         let expected = self.cheddar_rate;
         assert_eq!(
             expected, amount, 
-            "User need at least {} to stake one more token. Got {}",
-            self.cheddar_rate, amount
+            "User need at least {} cheddar to stake one more NFT. Got {}",
+            expected, amount
         );
 
         // update vault
