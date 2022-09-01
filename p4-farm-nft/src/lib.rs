@@ -700,11 +700,8 @@ impl Contract {
             );
             // recover cheddar
             self.total_cheddar_stake += amount.0;
-
             let mut v = self.recovered_vault(&user);
-
             v.total_cheddar_staked += amount.0;
-
             self._recompute_stake(&mut v);
             self.vaults.insert(&user, &v);
         }
