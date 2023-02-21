@@ -1,8 +1,11 @@
 # Cheddar Network
 
-
 Cheddar Network is the leading ecosystem for NEAR dapps. Our mission is to be grow the NEAR Dapp landscape by creating a common farming mechanism and funding new projects.
 
+## TokensAddresses
+
+- **cheddar:** `token.cheddar.near`
+- **cheddy NFT:** `nft.cheddar.near`
 
 ## Cheddar Defi Farm
 
