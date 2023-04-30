@@ -1,6 +1,6 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::LookupMap;
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::U128;
 use near_sdk::{
     assert_one_yocto, env, log, near_bindgen, AccountId, Balance, PanicOnDefault, Promise,
     PromiseOrValue, PromiseResult,
@@ -14,8 +14,6 @@ pub mod vault;
 use p3_lib::{constants::*, helpers::*};
 
 use crate::{errors::*, interfaces::*, vault::*};
-
-near_sdk::setup_alloc!();
 
 /// P2 rewards distribution contract implementing the "Scalable Reward Distribution on the Ethereum Blockchain"
 /// algorithm:
@@ -88,18 +86,18 @@ impl Contract {
     /// call `self.finalize_setup()`.
     #[init]
     pub fn new(
-        owner_id: ValidAccountId,
-        stake_tokens: Vec<ValidAccountId>,
+        owner_id: AccountId,
+        stake_tokens: Vec<AccountId>,
         stake_rates: Vec<U128>,
         farm_unit_emission: U128,
-        farm_tokens: Vec<ValidAccountId>,
+        farm_tokens: Vec<AccountId>,
         farm_token_rates: Vec<U128>,
         farming_start: u64,
         farming_end: u64,
-        cheddar_nft: ValidAccountId,
+        cheddar_nft: AccountId,
         cheddar_nft_boost: u32,
         fee_rate: u32,
-        treasury: ValidAccountId,
+        treasury: AccountId,
     ) -> Self {
         assert!(
             farming_start > env::block_timestamp() / SECOND,
@@ -115,10 +113,10 @@ impl Contract {
             owner_id: owner_id.into(),
             treasury: treasury.into(),
             vaults: LookupMap::new(b"v".to_vec()),
-            stake_tokens: stake_tokens.iter().map(|x| x.to_string()).collect(),
+            stake_tokens,
             staked_units: 0,
             stake_rates: stake_rates.iter().map(|x| x.0).collect(),
-            farm_tokens: farm_tokens.iter().map(|x| x.to_string()).collect(),
+            farm_tokens,
             farm_token_rates: farm_token_rates.iter().map(|x| x.0).collect(),
             farm_unit_emission: farm_unit_emission.0,
             farm_deposits: vec![0; farm_len],
@@ -245,11 +243,11 @@ impl Contract {
     /// This function is considered safe and will work when contract is paused to allow user
     /// to withdraw his NFTs.
     #[payable]
-    pub fn withdraw_nft(&mut self, receiver_id: ValidAccountId) {
+    pub fn withdraw_nft(&mut self, receiver_id: AccountId) {
         assert_one_yocto();
         let user = env::predecessor_account_id();
         let mut v = self.get_vault(&user);
-        self._withdraw_nft(&user, &mut v, receiver_id.into());
+        self._withdraw_nft(&user, &mut v, receiver_id);
         self.vaults.insert(&user, &v);
     }
 
@@ -280,7 +278,7 @@ impl Contract {
     /// Panics when the deposit was already done or the setup is completed.
     #[payable]
     pub fn setup_deposit_near(&mut self) {
-        self._setup_deposit(&NEAR_TOKEN.to_string(), env::attached_deposit())
+        self._setup_deposit(&near(), env::attached_deposit())
     }
 
     /// stakes native near.
@@ -290,7 +288,7 @@ impl Contract {
     pub fn stake_near(&mut self) {
         self.assert_is_active();
         let a = env::predecessor_account_id();
-        self._stake(&a, &NEAR_TOKEN.to_string(), env::attached_deposit());
+        self._stake(&a, &near(), env::attached_deposit());
     }
 
     // NEP-141 token staking is done via ft_transfer_call
@@ -302,11 +300,11 @@ impl Contract {
     /// Panics if the caller doesn't stake anything or if he doesn't have enough staked tokens.
     /// Requires 1 yNEAR payment for wallet 2FA.
     #[payable]
-    pub fn unstake(&mut self, token: ValidAccountId, amount: U128) -> U128 {
+    pub fn unstake(&mut self, token: AccountId, amount: U128) -> U128 {
         self.assert_is_active();
         assert_one_yocto();
         let user = env::predecessor_account_id();
-        self._unstake(&user, token.as_ref(), amount.0).into()
+        self._unstake(&user, &token, amount.0).into()
     }
 
     /// Unstakes everything and close the account. Sends all farmed tokens using a ft_transfer
@@ -403,21 +401,19 @@ impl Contract {
         log!("Withdrawing collected fee: {:?} tokens", self.fee_collected);
         for i in 0..self.stake_tokens.len() {
             if self.fee_collected[i] != 0 {
-                ext_ft::ft_transfer(
-                    self.treasury.clone(),
-                    self.fee_collected[i].into(),
-                    Some("fee withdraw".to_string()),
-                    &self.stake_tokens[i],
-                    1,
-                    GAS_FOR_FT_TRANSFER,
-                )
-                .then(ext_self::withdraw_fees_callback(
-                    i,
-                    self.fee_collected[i].into(),
-                    &env::current_account_id(),
-                    0,
-                    GAS_FOR_MINT_CALLBACK,
-                ));
+                ext_ft::ext(self.stake_tokens[i].clone())
+                    .with_attached_deposit(ONE_YOCTO)
+                    .with_static_gas(GAS_FOR_FT_TRANSFER)
+                    .ft_transfer(
+                        self.treasury.clone(),
+                        self.fee_collected[i].into(),
+                        Some("fee withdraw".to_string()),
+                    )
+                    .then(
+                        ext_self::ext(env::current_account_id())
+                            .with_static_gas(GAS_FOR_MINT_CALLBACK)
+                            .withdraw_fees_callback(i, self.fee_collected[i].into()),
+                    );
                 self.fee_collected[i] = 0;
             }
         }
@@ -452,14 +448,14 @@ impl Contract {
         self.assert_owner();
         // TODO: double check if we want to enable user funds recovery here.
         // If not then we need to check if token is in farming_tokens
-        ext_ft::ft_transfer(
-            self.owner_id.clone(),
-            amount,
-            Some("admin-withdrawing-back".to_string()),
-            &token,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        );
+        ext_ft::ext(token)
+            .with_attached_deposit(ONE_YOCTO)
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(
+                self.owner_id.clone(),
+                amount,
+                Some("admin-withdrawing-back".to_string()),
+            );
     }
 
     pub fn admin_set_rates(&mut self, stake_rates: Vec<U128>) {
@@ -520,57 +516,42 @@ impl Contract {
         }
         let fee = amount * self.fee_rate / 10_000;
         let amount = amount - fee;
-        let token = &self.stake_tokens[token_i];
+        let token = self.stake_tokens[token_i].clone();
         self.total_stake[token_i] -= amount;
         log!("unstaking {}, fee: {}", token, fee);
 
-        if token == NEAR_TOKEN {
+        if token.as_ref() == NEAR_TOKEN {
             return Promise::new(user).transfer(amount);
         }
-        return ext_ft::ft_transfer(
-            user.clone(),
-            amount.into(),
-            Some("unstaking".to_string()),
-            token,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        )
-        .then(ext_self::transfer_staked_callback(
-            user,
-            token_i,
-            amount.into(),
-            fee.into(),
-            &env::current_account_id(),
-            0,
-            GAS_FOR_MINT_CALLBACK,
-        ));
+        return ext_ft::ext(token)
+            .with_attached_deposit(ONE_YOCTO)
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(user.clone(), amount.into(), Some("unstaking".to_string()))
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_MINT_CALLBACK)
+                    .transfer_staked_callback(user, token_i, amount.into(), fee.into()),
+            );
     }
 
     #[inline]
     fn transfer_farmed_tokens(&mut self, u: &AccountId, token_i: usize, amount: u128) -> Promise {
-        let token = &self.farm_tokens[token_i];
+        let token = self.farm_tokens[token_i].clone();
         self.total_harvested[token_i] += amount;
-        if token == NEAR_TOKEN {
+        if token.as_ref() == NEAR_TOKEN {
             return Promise::new(u.clone()).transfer(amount);
         }
 
         let amount: U128 = amount.into();
-        return ext_ft::ft_transfer(
-            u.clone(),
-            amount,
-            Some("farming".to_string()),
-            token,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        )
-        .then(ext_self::transfer_farmed_callback(
-            u.clone(),
-            token_i,
-            amount,
-            &env::current_account_id(),
-            0,
-            GAS_FOR_MINT_CALLBACK,
-        ));
+        return ext_ft::ext(token)
+            .with_attached_deposit(ONE_YOCTO)
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(u.clone(), amount, Some("farming".to_string()))
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_MINT_CALLBACK)
+                    .transfer_farmed_callback(u.clone(), token_i, amount),
+            );
     }
 
     #[private]
@@ -737,40 +718,40 @@ mod tests {
 
     use super::*;
 
-    fn acc_cheddar() -> ValidAccountId {
+    fn acc_cheddar() -> AccountId {
         "cheddar1".to_string().try_into().unwrap()
     }
 
-    fn acc_farming2() -> ValidAccountId {
+    fn acc_farming2() -> AccountId {
         "cheddar2".to_string().try_into().unwrap()
     }
 
-    fn acc_staking1() -> ValidAccountId {
+    fn acc_staking1() -> AccountId {
         "atom1".try_into().unwrap()
     }
 
-    fn acc_staking2() -> ValidAccountId {
+    fn acc_staking2() -> AccountId {
         "atom2".try_into().unwrap()
     }
 
-    fn acc_nft_cheddy() -> ValidAccountId {
+    fn acc_nft_cheddy() -> AccountId {
         "nft_cheddy".try_into().unwrap()
     }
 
-    fn acc_u1() -> ValidAccountId {
+    fn acc_u1() -> AccountId {
         "user1".try_into().unwrap()
     }
 
-    fn acc_u2() -> ValidAccountId {
+    fn acc_u2() -> AccountId {
         "user2".try_into().unwrap()
     }
 
     #[allow(dead_code)]
-    fn acc_u3() -> ValidAccountId {
+    fn acc_u3() -> AccountId {
         "user3".try_into().unwrap()
     }
 
-    fn acc_owner() -> ValidAccountId {
+    fn acc_owner() -> AccountId {
         "user_owner".try_into().unwrap()
     }
 
@@ -788,7 +769,7 @@ mod tests {
 
     /// deposit_dec = size of deposit in e24 to set for the next transacton
     fn setup_contract(
-        predecessor: ValidAccountId,
+        predecessor: AccountId,
         deposit_dec: u128,
         fee_rate: u32,
     ) -> (VMContextBuilder, Contract) {
@@ -821,8 +802,8 @@ mod tests {
     fn stake(
         ctx: &mut VMContextBuilder,
         ctr: &mut Contract,
-        user: &ValidAccountId,
-        token: &ValidAccountId,
+        user: &AccountId,
+        token: &AccountId,
         amount: u128,
     ) {
         testing_env!(ctx
@@ -836,8 +817,8 @@ mod tests {
     fn unstake(
         ctx: &mut VMContextBuilder,
         ctr: &mut Contract,
-        user: &ValidAccountId,
-        token: &ValidAccountId,
+        user: &AccountId,
+        token: &AccountId,
         amount: u128,
     ) {
         testing_env!(ctx
@@ -848,7 +829,7 @@ mod tests {
     }
 
     /// epoch is a timer in rounds (rather than miliseconds)
-    fn close(ctx: &mut VMContextBuilder, ctr: &mut Contract, user: &ValidAccountId) {
+    fn close(ctx: &mut VMContextBuilder, ctr: &mut Contract, user: &AccountId) {
         testing_env!(ctx
             .attached_deposit(1)
             .predecessor_account_id(user.clone())
@@ -860,7 +841,7 @@ mod tests {
     fn register_user_and_stake(
         ctx: &mut VMContextBuilder,
         ctr: &mut Contract,
-        user: &ValidAccountId,
+        user: &AccountId,
         stake_amounts: &Vec<u128>,
         r: i64,
     ) {

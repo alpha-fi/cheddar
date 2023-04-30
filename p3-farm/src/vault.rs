@@ -1,7 +1,7 @@
 //! Vault is information per user about their balances in the exchange.
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::U128;
 use near_sdk::{env, log, AccountId, Balance, PromiseOrValue};
 
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
@@ -175,22 +175,20 @@ impl Contract {
     pub(crate) fn _withdraw_nft(&mut self, user: &AccountId, v: &mut Vault, receiver: AccountId) {
         assert!(!v.cheddy.is_empty(), "Sender has no NFT deposit");
         self.ping_all(v);
-        ext_nft::nft_transfer(
-            receiver,
-            v.cheddy.clone(),
-            None,
-            Some("Cheddy withdraw".to_string()),
-            &self.cheddar_nft,
-            1,
-            GAS_FOR_FT_TRANSFER,
-        )
-        .then(ext_self::withdraw_nft_callback(
-            user.clone(),
-            v.cheddy.clone(),
-            &env::current_account_id(),
-            0,
-            GAS_FOR_MINT_CALLBACK,
-        ));
+        ext_nft::ext(self.cheddar_nft.clone())
+            .with_attached_deposit(ONE_YOCTO)
+            .with_static_gas(GAS_FOR_NFT_TRANSFER)
+            .nft_transfer(
+                receiver,
+                v.cheddy.clone(),
+                None,
+                Some("Cheddy withdraw".to_string()),
+            )
+            .then(
+                ext_self::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_MINT_CALLBACK)
+                    .withdraw_nft_callback(user.clone(), v.cheddy.clone()),
+            );
 
         v.cheddy = "".into();
         self._recompute_stake(v);
@@ -214,7 +212,7 @@ impl FungibleTokenReceiver for Contract {
     #[allow(unused_variables)]
     fn ft_on_transfer(
         &mut self,
-        sender_id: ValidAccountId,
+        sender_id: AccountId,
         amount: U128,
         msg: String,
     ) -> PromiseOrValue<U128> {
@@ -222,7 +220,7 @@ impl FungibleTokenReceiver for Contract {
 
         let token = env::predecessor_account_id();
         assert!(
-            token != NEAR_TOKEN,
+            token.as_ref() != NEAR_TOKEN,
             "near must be sent using deposit_near()"
         );
         assert!(amount.0 > 0, "staked amount must be positive");
@@ -230,7 +228,7 @@ impl FungibleTokenReceiver for Contract {
             self._setup_deposit(&token, amount.0);
         } else {
             self.assert_is_active();
-            self._stake(sender_id.as_ref(), &token, amount.0);
+            self._stake(&sender_id, &token, amount.0);
         }
 
         return PromiseOrValue::Value(U128(0));
@@ -244,14 +242,12 @@ impl StorageManagement for Contract {
     #[payable]
     fn storage_deposit(
         &mut self,
-        account_id: Option<ValidAccountId>,
+        account_id: Option<AccountId>,
         registration_only: Option<bool>,
     ) -> StorageBalance {
         assert!(self.is_active, "contract is not active");
         let amount: Balance = env::attached_deposit();
-        let account_id = account_id
-            .map(|a| a.into())
-            .unwrap_or_else(|| env::predecessor_account_id());
+        let account_id = account_id.unwrap_or(env::predecessor_account_id());
         if self.vaults.contains_key(&account_id) {
             log!("The account is already registered, refunding the deposit");
             if amount > 0 {
@@ -299,8 +295,7 @@ impl StorageManagement for Contract {
 
     /// If the account is registered the total and available balance is always MIN_BALANCE.
     /// Otherwise None.
-    fn storage_balance_of(&self, account_id: ValidAccountId) -> Option<StorageBalance> {
-        let account_id: AccountId = account_id.into();
+    fn storage_balance_of(&self, account_id: AccountId) -> Option<StorageBalance> {
         if self.vaults.contains_key(&account_id) {
             return Some(storage_balance());
         }
@@ -313,4 +308,15 @@ fn storage_balance() -> StorageBalance {
         total: STORAGE_COST.into(),
         available: U128::from(0),
     }
+}
+
+pub fn min_stake(staked: &Vec<u128>, stake_rates: &Vec<u128>) -> Balance {
+    let mut min = std::u128::MAX;
+    for (i, rate) in stake_rates.iter().enumerate() {
+        let s = safe_mul(staked[i], *rate);
+        if s < min {
+            min = s;
+        }
+    }
+    return min;
 }
