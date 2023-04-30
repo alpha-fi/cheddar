@@ -64,7 +64,7 @@ impl Vault {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        all_zeros(&self.staked) && self.farmed == 0 && self.cheddy.is_empty()
+        check_all_zeros(&self.staked) && self.farmed == 0 && self.cheddy.is_empty()
     }
 }
 

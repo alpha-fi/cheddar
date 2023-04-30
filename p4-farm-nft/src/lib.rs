@@ -226,7 +226,7 @@ impl Contract {
                 let farmed = self
                     .farm_token_rates
                     .iter()
-                    .map(|rate| U128::from(farmed_tokens(v.farmed, *rate)))
+                    .map(|rate| U128::from(safe_mul(v.farmed, *rate)))
                     .collect();
                 return Some(P4Status {
                     stake_tokens: v.staked,
@@ -272,7 +272,7 @@ impl Contract {
         );
         let token_i = find_acc_idx(token, &self.farm_tokens);
         let total_rounds = round_number(self.farming_start, self.farming_end, self.farming_end);
-        let expected = farmed_tokens(
+        let expected = safe_mul(
             u128::from(total_rounds) * self.farm_unit_emission,
             self.farm_token_rates[token_i],
         );
@@ -416,7 +416,7 @@ impl Contract {
             return;
         }
         for i in 0..self.farm_tokens.len() {
-            let amount = farmed_tokens(farmed_units, self.farm_token_rates[i]);
+            let amount = safe_mul(farmed_units, self.farm_token_rates[i]);
             self.transfer_farmed_tokens(user, i, amount);
         }
     }
@@ -494,7 +494,7 @@ impl Contract {
         let out = self
             .farm_token_rates
             .iter()
-            .map(|rate| farmed_tokens(total_rounds * self.farm_unit_emission, *rate))
+            .map(|rate| safe_mul(total_rounds * self.farm_unit_emission, *rate))
             .collect();
         (to_U128s(&out), to_U128s(&self.farm_deposits))
     }

@@ -1,7 +1,6 @@
 # P4 NFT Token Farm with Many Staked and Many Farmed token types.
 
-The ["P3"](https://github.com/alpha-fi/cheddar/blob/master/p3-farm/README.md) farm allows to stake NFT tokens and farm Fungible Tokens with added staked NFT boost.
-
+The ["P4"](https://github.com/alpha-fi/cheddar/blob/master/p4-farm-nft/README.md) farm allows to stake NFT tokens and farm Fungible Tokens with added staked NFT boost.
 
 ## Parameters
 
@@ -47,9 +46,9 @@ USER_ID=me.testnet
 
    ```bash
    #REGISTER FARM INTO FARM TOKENS
-   near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125 
+   near call $CHEDDAR storage_deposit '{}' --accountId $FARM --deposit 0.00125
    near call $SECOND_FARMED storage_deposit '{}' --accountId $FARM --deposit 0.00125
-   
+
    #SETUP ([amount1, amount2] from finalize_setup_expected())
    near view $FARM finalize_setup_expected ''
    near call $CHEDDAR ft_transfer_call '{"receiver_id": "'$FARM'", "amount":"amount1", "msg": "setup reward deposit"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
@@ -69,7 +68,9 @@ USER_ID=me.testnet
    # stake
    near call $STAKEING_NFT_CONTRACT_ONE nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$TOKEN_ID_ONE_ONE'", "msg": "to farm"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
    ```
+
    - Add your (cheddy) boost! (you can have only one boost per time)
+
    ```bash
    near call $BOOST_NFT_CONTRACT nft_transfer_call '{"receiver_id": "'$FARM'", "token_id":"'$TOKEN_ID_BOOST'", "msg": "to boost"}' --accountId $USER_ID --depositYocto 1 --gas=200000000000000
    near call $FARM withdraw_boost_nft '' --accountId $USER_ID
@@ -96,6 +97,3 @@ USER_ID=me.testnet
    ```bash
    near call $FARM unstake '{"nft_contract_id":"'$STAKEING_NFT_CONTRACT_ONE'", "token_id":"'$TOKEN_ID_ONE_ONE'"}' --accountId $USER_ID --depositYocto 1 --gas=300000000000000
    ```
-```sh
-
-```

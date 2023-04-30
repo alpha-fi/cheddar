@@ -1,4 +1,3 @@
-
 pub mod constants {
     use near_sdk::{Balance, Gas};
 
@@ -9,13 +8,14 @@ pub mod constants {
     pub const GAS_FOR_NFT_TRANSFER: Gas = Gas(20 * TGAS.0);
     pub const GAS_FOR_CALLBACK: Gas = Gas(5 * TGAS.0);
     pub const GAS_FOR_MINT_CALLBACK: Gas = Gas(20 * TGAS.0);
-    
+
     /// one second in nanoseconds
     pub const SECOND: u64 = 1_000_000_000;
     /// round duration in seconds
     pub const ROUND: u64 = 60; // 1 minute
     pub const ROUND_NS: u64 = 60 * 1_000_000_000; // round duration in nanoseconds
 
+    pub const ONE_YOCTO: Balance = 1;
     const MILLI_NEAR: Balance = 1000_000000_000000_000000; // 1e21
     pub const STORAGE_COST: Balance = MILLI_NEAR * 60; // 0.06 NEAR
     /// E24 is 1 in yocto
@@ -31,7 +31,7 @@ pub mod constants {
     pub const ACC_OVERFLOW: Balance = 10_000_000; // 1e7
 
     // TOKENS
-    pub const NEAR_TOKEN:&str = "near";
+    pub const NEAR_TOKEN: &str = "near";
 }
 
 pub mod errors {
@@ -48,32 +48,41 @@ pub mod errors {
 }
 
 pub mod helpers {
-    use near_sdk::{AccountId, Balance};
-    use near_sdk::json_types::U128;
-    use uint::construct_uint;
     use crate::constants::*;
+    use near_sdk::json_types::U128;
+    use near_sdk::{AccountId, Balance};
+    use uint::construct_uint;
 
     construct_uint! {
         /// 256-bit unsigned integer.
         pub struct U256(4);
     }
-    
+
     pub fn near() -> AccountId {
         NEAR_TOKEN.parse::<AccountId>().unwrap()
     }
-    
-    pub fn farmed_tokens(units: Balance, rate: Balance) -> Balance {
+
+    pub fn safe_mul(units: Balance, rate: Balance) -> Balance {
         let e24_big: U256 = U256::from(E24);
         (U256::from(units) * U256::from(rate) / e24_big).as_u128()
     }
-    
+
     #[allow(non_snake_case)]
     pub fn to_U128s(v: &Vec<Balance>) -> Vec<U128> {
         v.iter().map(|x| U128::from(*x)).collect()
     }
-    
+
     pub fn find_acc_idx(acc: &AccountId, acc_v: &Vec<AccountId>) -> usize {
         acc_v.iter().position(|x| x == acc).expect("invalid token")
+    }
+
+    pub fn check_all_zeros(v: &Vec<Balance>) -> bool {
+        for x in v {
+            if *x != 0 {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// computes round number based on timestamp in seconds
@@ -137,7 +146,7 @@ pub mod interfaces {
             token_id: String,
             approval_id: Option<u64>,
             memo: Option<String>,
-            msg: String
+            msg: String,
         );
     }
 }

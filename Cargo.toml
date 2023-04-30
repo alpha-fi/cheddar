@@ -1,9 +1,12 @@
 [workspace]
 members = [
-    "./cheddar",
+# not used any more:
 #    "./p1-staking-pool-fixed",
 #    "./p1-staking-pool-dyn",
-    "./p2-token-staking-fixed",
+
+# need to migrate to sdk v4.1
+#    "./cheddar",
+#    "./p2-token-staking-fixed",
     "./p3-farm",
     "./p3-lib",
     "./p4-farm-nft",
