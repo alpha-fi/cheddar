@@ -150,6 +150,7 @@ impl StorageManagement for Contract {
         }
     }
 
+    #[payable]
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
         self.internal_storage_unregister(force).is_some()
     }

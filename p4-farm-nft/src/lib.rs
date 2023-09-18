@@ -461,6 +461,13 @@ impl Contract {
         self.farming_end = end;
     }
 
+    pub fn stop(&mut self) {
+        self.assert_owner();
+        let now = env::block_timestamp() / SECOND;
+        assert!(now < self.farming_end, "farm already finished");
+        self.farming_end = env::block_timestamp() / SECOND;
+    }
+
     pub fn finalize_setup(&mut self) {
         //self.assert_owner();
         assert!(

@@ -1,8 +1,8 @@
 //! Vault is information per user about their balances in the exchange.
 use crate::*;
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize)]
-#[cfg_attr(feature = "test", derive(Default, Debug, Clone))]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Debug)]
+#[cfg_attr(feature = "test", derive(Default, Clone))]
 pub struct Vault {
     /// Contract.reward_acc value when the last ping was called and rewards calculated
     pub reward_acc: Balance,
@@ -299,5 +299,54 @@ impl Contract {
         vault.boost_nft = "".into();
         self._recompute_stake(vault);
         self.vaults.insert(&user, &vault);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+
+    use near_sdk::{base64, borsh::BorshDeserialize, ONE_NEAR};
+
+    use crate::vault::Vault;
+
+    pub struct VaultStr {
+        pub key: String,
+        pub val: String,
+    }
+
+    #[test]
+    fn check_vaults() {
+        let vaults_str = vec![
+            VaultStr {key: "dggAAABvc2MubmVhcg==".to_owned(), val: "EmkAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dgsAAABtZXBwZW4ubmVhcg==".to_owned(), val: "gPACAAAAAAAAAAAAAAAAAAEAAAAGAAAABQAAADE6MjE3BAAAADE6OTEFAAAAMToyMjMEAAAAMTo2NwUAAAAxOjE5MgQAAAAxOjg4AAAAxpHN2KaM9gQAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCCKsFuO2CwgoAAAAA".to_owned()},
+VaultStr {key: "dgwAAABjaGlub2xhLm5lYXI=".to_owned(), val: "H/YAAAAAAAAAAAAAAAAAAAEAAAACAAAABQAAADE6MjM2BQAAADE6MzkzAAAAQtuZnTeEpwEAAAAAAAAAKjb+nJcXAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWWI6skqQrlgMAAAAA".to_owned()},
+VaultStr {key: "dgwAAABuaXN0YmVyLm5lYXI=".to_owned(), val: "H/YAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dg0AAABmb3JrbGlmdC5uZWFy".to_owned(), val: "19cAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dg0AAABzaWxra2luZy5uZWFy".to_owned(), val: "AAAAAAAAAAAAAAAAAAAAAAEAAAABAAAABQAAADE6MjE5AAAAoe3MzhvC0wAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALLEdWSdIVywEAAAAA".to_owned()},
+VaultStr {key: "dg4AAABjYW5obmdoaWEubmVhcg==".to_owned(), val: "H/YAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dg8AAABkYXZsZXR1bmVyLm5lYXI=".to_owned(), val: "dWEBAAAAAAAAAAAAAAAAAAEAAAABAAAABQAAADE6MjM1AAAAoe3MzhvC0wAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALLEdWSdIVywEAAAAA".to_owned()},
+VaultStr {key: "dg8AAABtb3JnYW5wYWdlLm5lYXI=".to_owned(), val: "BEgBAAAAAAAAAAAAAAAAAAEAAAABAAAABQAAADE6MzAxAAAAoe3MzhvC0wAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALLEdWSdIVywEAAAAA".to_owned()},
+VaultStr {key: "dg8AAABzaHViaGFtMDA3Lm5lYXI=".to_owned(), val: "H/YAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dhEAAABhbm5hc3RvaWxvdmEubmVhcg==".to_owned(), val: "MkgBAAAAAAAAAAAAAAAAAAEAAAABAAAABAAAADE6NzMAAACh7czOG8LTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAssR1ZJ0hXLAQAAAAA=".to_owned()},
+VaultStr {key: "dhwAAABuZXZlcnNldHRsZWludGVyc3RlbGxhci5uZWFy".to_owned(), val: "19cAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dkAAAAA5MDc2NjVjNmVmNzJiZDBjZjhkZWUxMjBiZWMwYjU4MGEwZGQyY2NiM2U4ZWMyNDc1NTJiODBiOGUyMzc4ODg1".to_owned(), val: "19cAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned()},
+VaultStr {key: "dkAAAAA5MzhjODNmY2Y5MDM1MGU0ZTVhZDdmMWE4MDJkM2RiNzQyNzE4ZTE5NGVmYmM3N2NmNWEyNTA3NDJmNjFhZWI5".to_owned(), val: "YM8AAAAAAAAAAAAAAAAAAAEAAAAEAAAABQAAADE6MjI3BAAAADE6MTIFAAAAMToxMzEFAAAAMToxMjMAAACEtjM7bwhPAwAAAAAAAAAyNnG5wV8AAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACywHFklSVcsBwAAAAA=".to_owned()},
+        ];
+
+        for v in vaults_str {
+            let key = base64::decode(v.key).unwrap();
+            let key = String::from_utf8(key).unwrap();
+            let val = base64::decode(v.val).unwrap();
+            let vault = Vault::try_from_slice(&val).unwrap();
+
+            println!("{:?}, {}", key, vault.cheddar_staked / ONE_NEAR);
+        }
+
+        // let data = "BEgBAAAAAAAAAAAAAAAAAAEAAAABAAAABQAAADE6MzAxAAAAoe3MzhvC0wAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALLEdWSdIVywEAAAAA";
+        // let bz = base64::decode(data).unwrap();
+        // let v = Vault::try_from_slice(&bz).unwrap();
+        // println!("{:?}", v);
+
+        assert!(false, "no way");
     }
 }

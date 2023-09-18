@@ -1,6 +1,6 @@
 use crate::*;
 use near_contract_standards::storage_management::{
-    StorageBalance, StorageBalanceBounds, StorageManagement
+    StorageBalance, StorageBalanceBounds, StorageManagement,
 };
 
 #[near_bindgen]
@@ -47,7 +47,9 @@ impl StorageManagement for Contract {
     }
 
     /// When force == true it will close the account. Otherwise this is noop.
+    #[payable]
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
+        assert_one_yocto();
         if Some(true) == force {
             self.close();
             return true;
